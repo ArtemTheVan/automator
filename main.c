@@ -2,6 +2,14 @@
 #include <stdio.h>
 #include <string.h>
 
+// Структура для описания одного действия мыши
+typedef struct
+{
+    int x;         // Координата X (относительные или абсолютные)
+    int y;         // Координата Y (относительные или абсолютные)
+    DWORD dwFlags; // Флаги действия (нажатие, отпускание, перемещение и т.д.)
+} MouseAction;
+
 // Симуляция нажатия клавиш для строки (включая спецсимволы)
 void simulate_keystroke(const char *text)
 {
@@ -74,20 +82,46 @@ void simulate_keystroke(const char *text)
     }
 }
 
-// 2. Функция симуляции клика мыши в текущей позиции курсора
-void simulate_mouse_click()
+// Функция эмуляции последовательности действий мыши
+void simulate_mouse_sequence(const MouseAction *actions, int count)
 {
-    printf("Simulating mouse click...\n");
-    INPUT ip = {0};
-    ip.type = INPUT_MOUSE;
-    ip.mi.dwFlags = MOUSEEVENTF_LEFTDOWN; // Нажатие левой кнопки
-    SendInput(1, &ip, sizeof(INPUT));
-    ip.mi.dwFlags = MOUSEEVENTF_LEFTUP; // Отпускание левой кнопки
-    SendInput(1, &ip, sizeof(INPUT));
-    Sleep(100);
+    if (!actions || count <= 0)
+    {
+        printf("Error: Invalid mouse action sequence\n");
+        return;
+    }
+    printf("Simulating mouse sequence (%d actions)...\n", count);
+    for (int i = 0; i < count; i++)
+    {
+        MouseAction action = actions[i];
+        INPUT ip = {0};
+        ip.type = INPUT_MOUSE;
+        // Если координаты указаны (не -1), используем их
+        if (action.x != -1 && action.y != -1)
+        {
+            // Преобразование в абсолютные координаты (0-65535)
+            ip.mi.dx = (action.x * 65535) / GetSystemMetrics(SM_CXSCREEN);
+            ip.mi.dy = (action.y * 65535) / GetSystemMetrics(SM_CYSCREEN);
+            ip.mi.dwFlags |= MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+        }
+        ip.mi.dwFlags |= action.dwFlags;
+        SendInput(1, &ip, sizeof(INPUT));
+        // Небольшая пауза между действиями
+        Sleep(50);
+    }
 }
 
-// 3. Функция захвата области экрана (основа для будущего OCR)
+// Альтернативная функция с фиксированной последовательностью
+void simulate_mouse_click_at(int x, int y)
+{
+    MouseAction actions[] = {
+        {x, y, MOUSEEVENTF_LEFTDOWN}, // Нажатие левой кнопки
+        {x, y, MOUSEEVENTF_LEFTUP}    // Отпускание левой кнопки
+    };
+    simulate_mouse_sequence(actions, 2);
+}
+
+// Функция захвата области экрана (основа для будущего OCR)
 // Сохраняет скриншот области (x, y, width, height) в BMP файл.
 int capture_screen_region(int x, int y, int width, int height, const char *filename)
 {
@@ -114,15 +148,43 @@ int capture_screen_region(int x, int y, int width, int height, const char *filen
 int main()
 {
     printf("=== GUI Automation Demo Started ===\n");
-
     // Даем пользователю время переключиться в нужное окно (5 секунд)
     printf("Switch to the target window within 5 seconds...\n");
     Sleep(5000);
-
     // Выполняем демонстрационные действия
     simulate_keystroke("hello!");
-    simulate_mouse_click();
-
+    // printf("=== Mouse Automation Demo ===\n");
+    Sleep(3000);
+    // Пример 1: Нажатие и отпускание левой кнопки на координатах (500, 300)
+    printf("\n1. Simple click at (500, 300)\n");
+    simulate_mouse_click_at(500, 300);
+    // Пример 2: Произвольная последовательность с использованием MouseAction
+    printf("\n2. Complex sequence: Move -> Click -> Drag -> Release\n");
+    MouseAction complexSequence[] = {
+        {500, 300, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE}, // Перемещение
+        {-1, -1, MOUSEEVENTF_LEFTDOWN},                      // Нажатие (координаты -1 = не менять)
+        {700, 400, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE}, // Перетаскивание
+        {-1, -1, MOUSEEVENTF_LEFTUP}                         // Отпускание
+    };
+    // Пересчитываем координаты в абсолютный формат
+    for (int i = 0; i < 4; i++)
+    {
+        if (complexSequence[i].x != -1)
+        {
+            complexSequence[i].x = (complexSequence[i].x * 65535) / GetSystemMetrics(SM_CXSCREEN);
+            complexSequence[i].y = (complexSequence[i].y * 65535) / GetSystemMetrics(SM_CYSCREEN);
+        }
+    }
+    simulate_mouse_sequence(complexSequence, 4);
+    // // Пример 3: Двойной клик
+    // printf("\n3. Double click at (600, 350)\n");
+    // MouseAction doubleClick[] = {
+    //     {600, 350, MOUSEEVENTF_LEFTDOWN},
+    //     {-1, -1, MOUSEEVENTF_LEFTUP},
+    //     {-1, -1, MOUSEEVENTF_LEFTDOWN},
+    //     {-1, -1, MOUSEEVENTF_LEFTUP}
+    // };
+    // simulate_mouse_sequence(doubleClick, 4);
     // Захватываем небольшую область (пример: 100x100 пикселей от точки 500, 500)
     if (capture_screen_region(500, 500, 100, 100, "screenshot.bmp"))
     {
