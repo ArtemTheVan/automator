@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug My WinAPI App",
+            "type": "cppvsdbg", // Используем отладчик для Windows
+            "request": "launch",
+            "program": "${workspaceFolder}\\automator.exe", // Имя вашего исполняемого файла
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "console": "externalTerminal", // Важно: запускает консоль в отдельном окне
+            "preLaunchTask": "build" // Связь с задачей сборки (см. ниже)
+        }
+    ]
+}
