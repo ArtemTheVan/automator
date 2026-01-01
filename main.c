@@ -1,25 +1,77 @@
 #include <windows.h>
 #include <stdio.h>
+#include <string.h>
 
-// 1. Функция симуляции нажатия клавиши (F15 - редко используемая, безопасная для тестов)
-void simulate_keystroke()
+// Симуляция нажатия клавиш для строки (включая спецсимволы)
+void simulate_keystroke(const char *text)
 {
-    printf("Simulating F15 key press...\n");
-    INPUT ip;
-    ip.type = INPUT_KEYBOARD;
-    ip.ki.wScan = 0;
-    ip.ki.time = 0;
-    ip.ki.dwExtraInfo = 0;
-
-    // Нажатие клавиши
-    ip.ki.wVk = 0x7E;  // Virtual-Key код для F15
-    ip.ki.dwFlags = 0; // 0 означает нажатие клавиши
-    SendInput(1, &ip, sizeof(INPUT));
-
-    // Отпускание клавиши
-    ip.ki.dwFlags = KEYEVENTF_KEYUP;
-    SendInput(1, &ip, sizeof(INPUT));
-    Sleep(100); // Небольшая пауза между действиями
+    printf("Simulating keystrokes for: %s\n", text);
+    for (size_t i = 0; i < strlen(text); i++)
+    {
+        char c = text[i];
+        SHORT vk = 0;
+        BOOL shift_needed = FALSE;
+        // Определяем виртуальный код клавиши и необходимость в Shift
+        if (c >= 'a' && c <= 'z')
+        {
+            vk = 0x41 + (c - 'a'); // 0x41 = 'A', строчные без Shift
+        }
+        else if (c >= 'A' && c <= 'Z')
+        {
+            vk = 0x41 + (c - 'A'); // Заглавные требуют Shift
+            shift_needed = TRUE;
+        }
+        else if (c >= '0' && c <= '9')
+        {
+            vk = 0x30 + (c - '0'); // 0x30 = '0', цифры без Shift
+        }
+        else
+        {
+            // Обработка специальных символов
+            switch (c)
+            {
+            case '!':
+                vk = 0x31; // Клавиша '1'
+                shift_needed = TRUE;
+                break;
+            case '@':
+                vk = 0x32; // Клавиша '2'
+                shift_needed = TRUE;
+                break;
+            case ' ':
+                vk = VK_SPACE;
+                break;
+            default:
+                // Если символ не поддерживается, пропустить
+                continue;
+            }
+        }
+        // Нажатие Shift, если требуется
+        if (shift_needed)
+        {
+            INPUT shift_down = {0};
+            shift_down.type = INPUT_KEYBOARD;
+            shift_down.ki.wVk = VK_SHIFT;
+            SendInput(1, &shift_down, sizeof(INPUT));
+        }
+        // Нажатие и отпускание основной клавиши
+        INPUT key_event = {0};
+        key_event.type = INPUT_KEYBOARD;
+        key_event.ki.wVk = vk;
+        SendInput(1, &key_event, sizeof(INPUT));
+        key_event.ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(1, &key_event, sizeof(INPUT));
+        // Отпускание Shift, если нажимали
+        if (shift_needed)
+        {
+            INPUT shift_up = {0};
+            shift_up.type = INPUT_KEYBOARD;
+            shift_up.ki.wVk = VK_SHIFT;
+            shift_up.ki.dwFlags = KEYEVENTF_KEYUP;
+            SendInput(1, &shift_up, sizeof(INPUT));
+        }
+        Sleep(10); // Короткая пауза между символами
+    }
 }
 
 // 2. Функция симуляции клика мыши в текущей позиции курсора
@@ -30,7 +82,6 @@ void simulate_mouse_click()
     ip.type = INPUT_MOUSE;
     ip.mi.dwFlags = MOUSEEVENTF_LEFTDOWN; // Нажатие левой кнопки
     SendInput(1, &ip, sizeof(INPUT));
-
     ip.mi.dwFlags = MOUSEEVENTF_LEFTUP; // Отпускание левой кнопки
     SendInput(1, &ip, sizeof(INPUT));
     Sleep(100);
@@ -69,7 +120,7 @@ int main()
     Sleep(5000);
 
     // Выполняем демонстрационные действия
-    simulate_keystroke();
+    simulate_keystroke("hello!");
     simulate_mouse_click();
 
     // Захватываем небольшую область (пример: 100x100 пикселей от точки 500, 500)
