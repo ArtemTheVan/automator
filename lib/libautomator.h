@@ -19,4 +19,10 @@
 //     // Linux-специфичные определения
 // #endif
 
+#ifdef BUILD_DLL
+    #define AUTOMATOR_API __declspec(dllexport)
+#else
+    #define AUTOMATOR_API __declspec(dllimport)
+#endif
+
 #endif
