@@ -29,5 +29,5 @@ HEADERS += automatorwidget.h
 QMAKE_CXXFLAGS += -Wall -Wextra
 QMAKE_CFLAGS += -Wall -Wextra
 
-# Отключаем некоторые предупреждения для внешних C-функций
+# Отключаем некоторые предупреждения
 QMAKE_CXXFLAGS += -Wno-unused-parameter
