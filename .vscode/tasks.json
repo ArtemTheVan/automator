@@ -2,19 +2,10 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "build",
+            "label": "build-with-make",
             "type": "shell",
-            "command": "gcc", // Убедитесь, что gcc (MinGW) в PATH
-            "args": [
-                "-g",          // Добавляет отладочную информацию
-                "${workspaceFolder}\\main.c", // Ваш главный файл
-                "-o",          // Флаг для указания выходного файла
-                "${workspaceFolder}\\automator.exe",
-                "-luser32",    // Ключевые библиотеки WinAPI
-                "-lgdi32",
-                "-Wall",       // Включить все предупреждения
-                "-Wextra"
-            ],
+            "command": "mingw32-make",
+            "args": [],
             "group": {
                 "kind": "build",
                 "isDefault": true
