@@ -1,5 +1,5 @@
-#ifndef SIMULATE_KEYSTROKE_H_
-#define SIMULATE_KEYSTROKE_H_
+#ifndef KEYBOARD_H_
+#define KEYBOARD_H_
 
 #include <windows.h>
 #include <stdio.h>

@@ -1,7 +1,7 @@
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
-#include "simulate_keystroke.h"
+#include "keyboard.h"
 
 // Симуляция нажатия клавиш для строки (включая спецсимволы)
 void simulate_keystroke(const char *text)

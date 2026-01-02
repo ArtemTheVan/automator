@@ -1,7 +1,7 @@
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
-#include "simulate_mouse.h"
+#include "mouse.h"
 
 // Функция эмуляции последовательности действий мыши
 void simulate_mouse_sequence(const MouseAction *actions, int count)

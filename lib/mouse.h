@@ -1,5 +1,5 @@
-#ifndef SIMULATE_MOUSE_H_
-#define SIMULATE_MOUSE_H_
+#ifndef MOUSE_H_
+#define MOUSE_H_
 
 #include <windows.h>
 #include <stdio.h>
