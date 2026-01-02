@@ -2,15 +2,82 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "build-with-make",
+            "label": "configure-qt-project",
+            "type": "shell",
+            "command": "qmake",
+            "args": [
+                "${workspaceFolder}/gui-qt/Automator.pro",
+                "-spec",
+                "win32-g++",
+                "CONFIG+=debug",
+                "CONFIG+=qml_debug"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/gui-qt"
+            },
+            "group": "build",
+            "problemMatcher": ["$gcc"],
+            "detail": "Настройка Qt проекта с отладочной информацией"
+        },
+        {
+            "label": "build-qt-debug",
             "type": "shell",
             "command": "mingw32-make",
-            "args": [],
-            "group": {
-                "kind": "build",
-                "isDefault": true
+            "args": ["debug"],
+            "options": {
+                "cwd": "${workspaceFolder}/gui-qt"
             },
-            "problemMatcher": ["$gcc"]
+            "dependsOn": ["configure-qt-project"],
+            "group": "build",
+            "problemMatcher": ["$gcc"],
+            "detail": "Сборка Qt приложения в debug конфигурации"
+        },
+        {
+            "label": "build-qt-release",
+            "type": "shell",
+            "command": "mingw32-make",
+            "args": ["release"],
+            "options": {
+                "cwd": "${workspaceFolder}/gui-qt"
+            },
+            "dependsOn": ["configure-qt-project"],
+            "group": "build",
+            "problemMatcher": ["$gcc"],
+            "detail": "Сборка Qt приложения в release конфигурации"
+        },
+        {
+            "label": "build-qt-full",
+            "type": "shell",
+            "command": "mingw32-make",
+            "args": ["clean", "release"],
+            "options": {
+                "cwd": "${workspaceFolder}/gui-qt"
+            },
+            "dependsOn": ["configure-qt-project"],
+            "group": "build",
+            "problemMatcher": ["$gcc"],
+            "detail": "Полная пересборка Qt приложения (release)"
+        },
+        {
+            "label": "run-qt-app",
+            "type": "shell",
+            "command": "${workspaceFolder}/gui-qt/release/automator_qt.exe",
+            "group": "test",
+            "dependsOn": ["build-qt-release"],
+            "problemMatcher": [],
+            "detail": "Запуск Qt приложения без отладки"
+        },
+        {
+            "label": "clean-qt",
+            "type": "shell",
+            "command": "mingw32-make",
+            "args": ["clean"],
+            "options": {
+                "cwd": "${workspaceFolder}/gui-qt"
+            },
+            "group": "build",
+            "problemMatcher": [],
+            "detail": "Очистка собранных файлов Qt проекта"
         }
     ]
 }

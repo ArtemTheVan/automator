@@ -2,16 +2,66 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug My WinAPI App",
+            "name": "Debug Qt App (Release)",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/automator.exe",
+            "program": "${workspaceFolder}/gui-qt/release/automator_qt.exe",
             "args": [],
             "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "environment": [],
+            "cwd": "${workspaceFolder}/gui-qt",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "${env:PATH};C:/Qt/5.15.2/mingw81_64/bin"
+                }
+            ],
             "console": "externalTerminal",
-            "preLaunchTask": "build-with-make"  // Используем задачу make
+            "internalConsoleOptions": "neverOpen",
+            "preLaunchTask": "build-qt-full",
+            "postDebugTask": null
+        },
+        {
+            "name": "Debug Qt App (Debug)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/gui-qt/debug/automator_qt.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/gui-qt",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "${env:PATH};C:/Qt/5.15.2/mingw81_64/bin"
+                }
+            ],
+            "console": "externalTerminal",
+            "preLaunchTask": "build-qt-debug"
+        },
+        {
+            "name": "Debug Qt App with GDB",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/gui-qt/debug/automator_qt.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/gui-qt",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "${env:PATH};C:/Qt/5.15.2/mingw81_64/bin"
+                }
+            ],
+            "externalConsole": true,
+            "MIMode": "gdb",
+            "miDebuggerPath": "C:/Qt/Tools/mingw810_64/bin/gdb.exe",
+            "setupCommands": [
+                {
+                    "description": "Включить pretty-printing для gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "build-qt-debug"
         }
     ]
 }
