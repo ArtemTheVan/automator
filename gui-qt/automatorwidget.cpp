@@ -9,6 +9,11 @@
 #include <windows.h>
 #include <vector>
 
+// Для Qt 6
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <QStringDecoder>
+#endif
+
 // Вспомогательная структура для хранения действий мыши
 struct MouseActionStruct
 {
@@ -137,10 +142,19 @@ QString AutomatorWidget::createTempPythonFile(const QString &script)
     QTextStream out(&file);
 
     // Добавляем импорт модуля wrapper_automator из временной директории
+    out << "# -*- coding: utf-8 -*-\n";
     out << "import sys\n";
     out << "import os\n";
-    out << "sys.path.insert(0, r'" << tempDir << "')\n";
-    out << "\n";
+    out << "import io\n\n";
+
+    // Устанавливаем кодировку вывода
+    out << "# Устанавливаем кодировку вывода в UTF-8\n";
+    out << "sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')\n";
+    out << "sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')\n\n";
+
+    out << "# Добавляем временную директорию в путь\n";
+    out << "sys.path.insert(0, r'" << tempDir << "')\n\n";
+
     out << "try:\n";
     out << "    from wrapper_automator import automator\n";
     out << "    print('Модуль wrapper_automator успешно загружен')\n";
@@ -164,8 +178,8 @@ QString AutomatorWidget::createTempPythonFile(const QString &script)
     out << "        print('Модуль wrapper_automator загружен из дополнительных путей')\n";
     out << "    except ImportError:\n";
     out << "        print('Не удалось загрузить wrapper_automator')\n";
-    out << "        sys.exit(1)\n";
-    out << "\n";
+    out << "        sys.exit(1)\n\n";
+
     out << "# =========== Начало пользовательского скрипта ===========\n\n";
     out << script;
 
@@ -475,6 +489,12 @@ void AutomatorWidget::runScript()
     m_scriptProcess = new QProcess(this);
     m_scriptProcess->setProcessChannelMode(QProcess::MergedChannels);
 
+    // Устанавливаем переменные окружения для правильной кодировки
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert("PYTHONIOENCODING", "utf-8");
+    env.insert("PYTHONUTF8", "1");
+    m_scriptProcess->setProcessEnvironment(env);
+
     // Подключаем сигналы
     connect(m_scriptProcess, &QProcess::readyReadStandardOutput,
             this, &AutomatorWidget::onScriptOutput);
@@ -483,8 +503,8 @@ void AutomatorWidget::runScript()
     connect(m_scriptProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, &AutomatorWidget::onScriptFinished);
 
-    // Запускаем Python
-    m_scriptProcess->start(m_pythonPath, {m_tempPythonFile});
+    // Запускаем Python с параметрами для UTF-8
+    m_scriptProcess->start(m_pythonPath, {"-X", "utf8", m_tempPythonFile});
 
     if (!m_scriptProcess->waitForStarted(3000))
     {
