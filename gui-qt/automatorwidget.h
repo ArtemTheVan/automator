@@ -6,7 +6,6 @@
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QThread>
 #include <QMessageBox>
 #include <QApplication>
 #include <QPlainTextEdit>
@@ -25,27 +24,6 @@
 #include <QUuid>
 #include <QSettings>
 
-// Класс для выполнения автоматизации в отдельном потоке
-class AutomationWorker : public QThread
-{
-    Q_OBJECT
-
-public:
-    explicit AutomationWorker(const QString &script)
-        : m_script(script)
-    {
-    }
-
-    void run() override;
-
-signals:
-    void automationFinished();
-    void statusChanged(const QString &message);
-
-private:
-    QString m_script;
-};
-
 // Основное окно приложения
 class AutomatorWidget : public QWidget
 {
@@ -56,11 +34,6 @@ public:
     ~AutomatorWidget();
 
 private slots:
-    void startAutomation();
-    void stopAutomation();
-    void onAutomationFinished();
-    void updateStatus(const QString &message);
-
     // Файловые операции
     void newScript();
     void loadScript();
@@ -75,12 +48,12 @@ private slots:
     // Запись действий
     void toggleRecording(bool checked);
 
-    // Python
-    void runPythonScript();
-    void stopPythonScript();
-    void onPythonFinished(int exitCode, QProcess::ExitStatus exitStatus);
-    void onPythonOutput();
-    void onPythonError();
+    // Выполнение скрипта
+    void runScript();
+    void stopScript();
+    void onScriptFinished(int exitCode, QProcess::ExitStatus exitStatus);
+    void onScriptOutput();
+    void onScriptError();
     void findPython();
     void updateRecentFilesMenu();
     void loadRecentFile();
@@ -96,8 +69,6 @@ private:
     QPushButton *m_recordButton;
     QPushButton *m_loadButton;
     QPushButton *m_saveButton;
-    QPushButton *m_pythonButton;
-    QPushButton *m_pythonStopButton;
     QLabel *m_statusLabel;
     QLabel *m_lineColLabel;
     QComboBox *m_fontSizeCombo;
@@ -111,8 +82,7 @@ private:
     QMenu *m_recentFilesMenu;
 
     // Дополнительные
-    AutomationWorker *m_worker;
-    QProcess *m_pythonProcess;
+    QProcess *m_scriptProcess;
     QTimer *m_recordingTimer;
     QSettings *m_settings;
     QString m_currentFile;

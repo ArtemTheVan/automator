@@ -17,42 +17,15 @@ struct MouseActionStruct
     DWORD flags;
 };
 
-// =========== AutomationWorker ===========
-
-void AutomationWorker::run()
-{
-    emit statusChanged("Начинаю выполнение скрипта...");
-
-    QStringList lines = m_script.split('\n', Qt::SkipEmptyParts);
-
-    for (const QString &line : lines)
-    {
-        QString trimmed = line.trimmed();
-        if (trimmed.isEmpty() || trimmed.startsWith('#'))
-        {
-            continue;
-        }
-
-        if (QThread::currentThread()->isInterruptionRequested())
-        {
-            emit statusChanged("Выполнение прервано пользователем");
-            break;
-        }
-    }
-
-    emit statusChanged("Скрипт выполнен!");
-    emit automationFinished();
-}
-
 // =========== AutomatorWidget ===========
 
 AutomatorWidget::AutomatorWidget(QWidget *parent)
     : QWidget(parent), m_tabWidget(nullptr), m_editor(nullptr), m_lineNumbers(nullptr), m_outputBrowser(nullptr),
       m_startButton(nullptr), m_stopButton(nullptr), m_recordButton(nullptr), m_loadButton(nullptr),
-      m_saveButton(nullptr), m_pythonButton(nullptr), m_pythonStopButton(nullptr), m_statusLabel(nullptr),
-      m_lineColLabel(nullptr), m_fontSizeCombo(nullptr), m_templateCombo(nullptr), m_menuBar(nullptr),
-      m_worker(nullptr), m_pythonProcess(nullptr), m_recordingTimer(nullptr), m_settings(nullptr),
-      m_currentFile(""), m_pythonPath("python"), m_tempPythonFile(""), m_isRecording(false), m_isModified(false)
+      m_saveButton(nullptr), m_statusLabel(nullptr), m_lineColLabel(nullptr), m_fontSizeCombo(nullptr),
+      m_templateCombo(nullptr), m_menuBar(nullptr), m_scriptProcess(nullptr), m_recordingTimer(nullptr),
+      m_settings(nullptr), m_currentFile(""), m_pythonPath("python"), m_tempPythonFile(""),
+      m_isRecording(false), m_isModified(false)
 {
     // Инициализация настроек
     m_settings = new QSettings("Automator", "ScriptEditor", this);
@@ -75,18 +48,11 @@ AutomatorWidget::AutomatorWidget(QWidget *parent)
 
 AutomatorWidget::~AutomatorWidget()
 {
-    if (m_worker && m_worker->isRunning())
+    if (m_scriptProcess && m_scriptProcess->state() == QProcess::Running)
     {
-        m_worker->requestInterruption();
-        m_worker->wait();
-        delete m_worker;
-    }
-
-    if (m_pythonProcess && m_pythonProcess->state() == QProcess::Running)
-    {
-        m_pythonProcess->terminate();
-        m_pythonProcess->waitForFinished(1000);
-        delete m_pythonProcess;
+        m_scriptProcess->terminate();
+        m_scriptProcess->waitForFinished(1000);
+        delete m_scriptProcess;
     }
 
     cleanupTempFile(); // Удалить временный файл
@@ -313,28 +279,19 @@ void AutomatorWidget::setupUI()
     m_saveButton = new QPushButton("💾 Сохранить");
     connect(m_saveButton, &QPushButton::clicked, this, &AutomatorWidget::saveScript);
 
-    m_pythonButton = new QPushButton("🐍 Выполнить Python");
-    connect(m_pythonButton, &QPushButton::clicked, this, &AutomatorWidget::runPythonScript);
-
-    m_pythonStopButton = new QPushButton("⏹ Стоп Python");
-    m_pythonStopButton->setEnabled(false);
-    connect(m_pythonStopButton, &QPushButton::clicked, this, &AutomatorWidget::stopPythonScript);
+    m_startButton = new QPushButton("▶ Выполнить");
+    connect(m_startButton, &QPushButton::clicked, this, &AutomatorWidget::runScript);
 
     m_stopButton = new QPushButton("⏹ Стоп");
     m_stopButton->setEnabled(false);
-    connect(m_stopButton, &QPushButton::clicked, this, &AutomatorWidget::stopAutomation);
-
-    m_startButton = new QPushButton("▶ Выполнить");
-    connect(m_startButton, &QPushButton::clicked, this, &AutomatorWidget::startAutomation);
+    connect(m_stopButton, &QPushButton::clicked, this, &AutomatorWidget::stopScript);
 
     buttonLayout->addWidget(m_recordButton);
     buttonLayout->addWidget(m_loadButton);
     buttonLayout->addWidget(m_saveButton);
     buttonLayout->addStretch();
-    buttonLayout->addWidget(m_pythonButton);
-    buttonLayout->addWidget(m_pythonStopButton);
-    buttonLayout->addWidget(m_stopButton);
     buttonLayout->addWidget(m_startButton);
+    buttonLayout->addWidget(m_stopButton);
 
     // Статус бар
     QHBoxLayout *statusLayout = new QHBoxLayout();
@@ -450,15 +407,11 @@ void AutomatorWidget::setupMenu()
 
     QAction *runAction = m_runMenu->addAction("Выполнить скрипт");
     runAction->setShortcut(QKeySequence("F5"));
-    connect(runAction, &QAction::triggered, this, &AutomatorWidget::startAutomation);
-
-    QAction *runPythonAction = m_runMenu->addAction("Выполнить Python");
-    runPythonAction->setShortcut(QKeySequence("Ctrl+F5"));
-    connect(runPythonAction, &QAction::triggered, this, &AutomatorWidget::runPythonScript);
+    connect(runAction, &QAction::triggered, this, &AutomatorWidget::runScript);
 
     QAction *stopAction = m_runMenu->addAction("Остановить выполнение");
     stopAction->setShortcut(QKeySequence("Shift+F5"));
-    connect(stopAction, &QAction::triggered, this, &AutomatorWidget::stopAutomation);
+    connect(stopAction, &QAction::triggered, this, &AutomatorWidget::stopScript);
 
     QAction *findPythonAction = m_runMenu->addAction("Найти Python");
     connect(findPythonAction, &QAction::triggered, this, &AutomatorWidget::findPython);
@@ -478,38 +431,7 @@ void AutomatorWidget::setupEditor()
 
 // =========== Слоты ===========
 
-void AutomatorWidget::startAutomation()
-{
-    QString script = m_editor->toPlainText();
-    if (script.isEmpty())
-    {
-        QMessageBox::warning(this, "Ошибка", "Скрипт пуст!");
-        return;
-    }
-
-    m_startButton->setEnabled(false);
-    m_stopButton->setEnabled(true);
-    m_pythonButton->setEnabled(false);
-    m_recordButton->setEnabled(false);
-    m_loadButton->setEnabled(false);
-    m_saveButton->setEnabled(false);
-    m_statusLabel->setText("Выполнение скрипта...");
-    m_statusLabel->setStyleSheet("QLabel { background-color: #ffffcc; color: black; }");
-
-    m_worker = new AutomationWorker(script);
-    connect(m_worker, &AutomationWorker::automationFinished,
-            this, &AutomatorWidget::onAutomationFinished);
-    connect(m_worker, &AutomationWorker::statusChanged,
-            this, &AutomatorWidget::updateStatus);
-    connect(m_worker, &QThread::finished,
-            m_worker, &QObject::deleteLater);
-    connect(m_worker, &QThread::finished, [this]()
-            { m_worker = nullptr; });
-
-    m_worker->start();
-}
-
-void AutomatorWidget::runPythonScript()
+void AutomatorWidget::runScript()
 {
     QString script = m_editor->toPlainText();
     if (script.isEmpty())
@@ -535,14 +457,12 @@ void AutomatorWidget::runPythonScript()
         return;
     }
 
-    m_pythonButton->setEnabled(false);
-    m_pythonStopButton->setEnabled(true);
     m_startButton->setEnabled(false);
-    m_stopButton->setEnabled(false);
+    m_stopButton->setEnabled(true);
     m_recordButton->setEnabled(false);
     m_loadButton->setEnabled(false);
     m_saveButton->setEnabled(false);
-    m_statusLabel->setText("Выполнение Python скрипта...");
+    m_statusLabel->setText("Выполнение скрипта...");
     m_statusLabel->setStyleSheet("QLabel { background-color: #ccffcc; color: black; }");
 
     // Очищаем вывод
@@ -552,86 +472,85 @@ void AutomatorWidget::runPythonScript()
     m_outputBrowser->append(QString("Файл скрипта: %1").arg(m_tempPythonFile));
 
     // Создаем процесс Python
-    m_pythonProcess = new QProcess(this);
-    m_pythonProcess->setProcessChannelMode(QProcess::MergedChannels);
+    m_scriptProcess = new QProcess(this);
+    m_scriptProcess->setProcessChannelMode(QProcess::MergedChannels);
 
     // Подключаем сигналы
-    connect(m_pythonProcess, &QProcess::readyReadStandardOutput,
-            this, &AutomatorWidget::onPythonOutput);
-    connect(m_pythonProcess, &QProcess::readyReadStandardError,
-            this, &AutomatorWidget::onPythonError);
-    connect(m_pythonProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, &AutomatorWidget::onPythonFinished);
+    connect(m_scriptProcess, &QProcess::readyReadStandardOutput,
+            this, &AutomatorWidget::onScriptOutput);
+    connect(m_scriptProcess, &QProcess::readyReadStandardError,
+            this, &AutomatorWidget::onScriptError);
+    connect(m_scriptProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, &AutomatorWidget::onScriptFinished);
 
     // Запускаем Python
-    m_pythonProcess->start(m_pythonPath, {m_tempPythonFile});
+    m_scriptProcess->start(m_pythonPath, {m_tempPythonFile});
 
-    if (!m_pythonProcess->waitForStarted(3000))
+    if (!m_scriptProcess->waitForStarted(3000))
     {
         m_outputBrowser->append("Ошибка: Не удалось запустить Python. Убедитесь, что Python установлен и добавлен в PATH");
         m_outputBrowser->append("Попробуйте использовать действие 'Найти Python' в меню 'Выполнение'");
         cleanupTempFile();
-        onPythonFinished(-1, QProcess::CrashExit);
+        onScriptFinished(-1, QProcess::CrashExit);
         return;
     }
 }
 
-void AutomatorWidget::stopPythonScript()
+void AutomatorWidget::stopScript()
 {
-    if (m_pythonProcess && m_pythonProcess->state() == QProcess::Running)
+    if (m_scriptProcess && m_scriptProcess->state() == QProcess::Running)
     {
-        m_pythonProcess->terminate();
-        if (!m_pythonProcess->waitForFinished(1000))
+        m_scriptProcess->terminate();
+        if (!m_scriptProcess->waitForFinished(1000))
         {
-            m_pythonProcess->kill();
+            m_scriptProcess->kill();
         }
     }
 }
 
-void AutomatorWidget::onPythonFinished(int exitCode, QProcess::ExitStatus exitStatus)
+void AutomatorWidget::onScriptFinished(int exitCode, QProcess::ExitStatus exitStatus)
 {
     if (exitStatus == QProcess::CrashExit)
     {
-        m_outputBrowser->append("=== Python скрипт завершился аварийно ===");
+        m_outputBrowser->append("=== Скрипт завершился аварийно ===");
     }
     else
     {
-        m_outputBrowser->append(QString("=== Python скрипт завершен с кодом %1 ===").arg(exitCode));
+        m_outputBrowser->append(QString("=== Скрипт завершен с кодом %1 ===").arg(exitCode));
     }
 
-    m_pythonButton->setEnabled(true);
-    m_pythonStopButton->setEnabled(false);
     m_startButton->setEnabled(true);
+    m_stopButton->setEnabled(false);
     m_recordButton->setEnabled(true);
     m_loadButton->setEnabled(true);
     m_saveButton->setEnabled(true);
 
     if (exitCode == 0 && exitStatus == QProcess::NormalExit)
     {
-        m_statusLabel->setText("Python скрипт выполнен успешно");
+        m_statusLabel->setText("Скрипт выполнен успешно");
         m_statusLabel->setStyleSheet("QLabel { background-color: #ccffcc; color: black; }");
     }
     else
     {
-        m_statusLabel->setText("Python скрипт завершился с ошибкой");
+        m_statusLabel->setText("Скрипт завершился с ошибкой");
         m_statusLabel->setStyleSheet("QLabel { background-color: #ffe0e0; color: black; }");
     }
 
     // Удаляем временный файл
     cleanupTempFile();
 
-    if (m_pythonProcess)
+    if (m_scriptProcess)
     {
-        m_pythonProcess->deleteLater();
-        m_pythonProcess = nullptr;
+        m_scriptProcess->deleteLater();
+        m_scriptProcess = nullptr;
     }
 }
 
-void AutomatorWidget::onPythonOutput()
+void AutomatorWidget::onScriptOutput()
 {
-    if (m_pythonProcess)
+    if (m_scriptProcess)
     {
-        QByteArray output = m_pythonProcess->readAllStandardOutput();
+        QByteArray output = m_scriptProcess->readAllStandardOutput();
         QString outputStr = QString::fromUtf8(output).trimmed();
         if (!outputStr.isEmpty())
         {
@@ -640,48 +559,17 @@ void AutomatorWidget::onPythonOutput()
     }
 }
 
-void AutomatorWidget::onPythonError()
+void AutomatorWidget::onScriptError()
 {
-    if (m_pythonProcess)
+    if (m_scriptProcess)
     {
-        QByteArray error = m_pythonProcess->readAllStandardError();
+        QByteArray error = m_scriptProcess->readAllStandardError();
         QString errorStr = QString::fromUtf8(error).trimmed();
         if (!errorStr.isEmpty())
         {
             m_outputBrowser->append("Ошибка: " + errorStr);
         }
     }
-}
-
-void AutomatorWidget::stopAutomation()
-{
-    if (m_worker && m_worker->isRunning())
-    {
-        m_worker->requestInterruption();
-        m_statusLabel->setText("Остановка выполнения...");
-    }
-}
-
-void AutomatorWidget::onAutomationFinished()
-{
-    m_startButton->setEnabled(true);
-    m_stopButton->setEnabled(false);
-    m_pythonButton->setEnabled(true);
-    m_recordButton->setEnabled(true);
-    m_loadButton->setEnabled(true);
-    m_saveButton->setEnabled(true);
-    m_statusLabel->setText("Скрипт выполнен!");
-    m_statusLabel->setStyleSheet("QLabel { background-color: #ccffcc; color: black; }");
-
-    if (m_worker)
-    {
-        m_worker = nullptr;
-    }
-}
-
-void AutomatorWidget::updateStatus(const QString &message)
-{
-    m_statusLabel->setText(message);
 }
 
 void AutomatorWidget::newScript()
