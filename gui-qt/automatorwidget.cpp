@@ -29,7 +29,7 @@ void AutomationWorker::run()
             continue;
         }
         
-        executeCommand(trimmed);
+        // executeCommand(trimmed);
         
         if (QThread::currentThread()->isInterruptionRequested()) {
             emit statusChanged("Выполнение прервано пользователем");
@@ -39,80 +39,6 @@ void AutomationWorker::run()
     
     emit statusChanged("Скрипт выполнен!");
     emit automationFinished();
-}
-
-void AutomationWorker::executeCommand(const QString& command)
-{
-    if (command.startsWith("KEYSTROKE ")) {
-        QString text = command.mid(10).trimmed();
-        if (text.startsWith('"') && text.endsWith('"')) {
-            text = text.mid(1, text.length() - 2);
-        }
-        emit statusChanged(QString("Ввод текста: %1").arg(text));
-        simulate_keystroke(text.toUtf8().constData());
-    }
-    else if (command.startsWith("CLICK ")) {
-        QStringList parts = command.mid(6).split(',');
-        if (parts.size() >= 2) {
-            int x = parts[0].trimmed().toInt();
-            int y = parts[1].trimmed().toInt();
-            emit statusChanged(QString("Клик в (%1, %2)").arg(x).arg(y));
-            simulate_mouse_click_at(x, y);
-        }
-    }
-    else if (command.startsWith("SLEEP ")) {
-        int ms = command.mid(6).trimmed().toInt();
-        emit statusChanged(QString("Пауза %1 мс").arg(ms));
-        Sleep(ms);
-    }
-    else if (command.startsWith("CAPTURE ")) {
-        QStringList parts = command.mid(8).split(',');
-        if (parts.size() >= 5) {
-            int x = parts[0].trimmed().toInt();
-            int y = parts[1].trimmed().toInt();
-            int w = parts[2].trimmed().toInt();
-            int h = parts[3].trimmed().toInt();
-            QString filename = parts[4].trimmed();
-            emit statusChanged(QString("Захват экрана в %1").arg(filename));
-            capture_screen_region(x, y, w, h, filename.toUtf8().constData());
-        }
-    }
-    else if (command.startsWith("MOUSE_SEQUENCE ")) {
-        QString params = command.mid(15).trimmed();
-        QStringList actions = params.split(';', Qt::SkipEmptyParts);
-        std::vector<MouseActionStruct> mouseActions;
-        
-        for (const QString& action : actions) {
-            QStringList parts = action.split(',');
-            if (parts.size() >= 3) {
-                int x = parts[0].trimmed().toInt();
-                int y = parts[1].trimmed().toInt();
-                DWORD flags = 0;
-                
-                QString flagStr = parts[2].trimmed().toUpper();
-                if (flagStr == "LEFTDOWN") flags = MOUSEEVENTF_LEFTDOWN;
-                else if (flagStr == "LEFTUP") flags = MOUSEEVENTF_LEFTUP;
-                else if (flagStr == "RIGHTDOWN") flags = MOUSEEVENTF_RIGHTDOWN;
-                else if (flagStr == "RIGHTUP") flags = MOUSEEVENTF_RIGHTUP;
-                else if (flagStr == "MOVE") flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
-                
-                mouseActions.push_back({x, y, flags});
-            }
-        }
-        
-        if (!mouseActions.empty()) {
-            simulate_mouse_sequence(mouseActions.data(), mouseActions.size());
-            emit statusChanged(QString("Выполнено %1 действий мыши").arg(mouseActions.size()));
-        }
-    }
-    else if (command.startsWith("WAIT_WINDOW ")) {
-        QString windowTitle = command.mid(12).trimmed();
-        emit statusChanged(QString("Ожидание окна '%1'").arg(windowTitle));
-        Sleep(1000);
-    }
-    else {
-        emit statusChanged(QString("Неизвестная команда: %1").arg(command));
-    }
 }
 
 // =========== AutomatorWidget ===========

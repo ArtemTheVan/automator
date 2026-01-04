@@ -24,18 +24,6 @@
 #include <QDir>
 #include <QUuid>
 
-// Внешние C-функции из библиотеки automator
-#ifdef __cplusplus
-extern "C" {
-#endif
-    void simulate_keystroke(const char* text);
-    void simulate_mouse_click_at(int x, int y);
-    void simulate_mouse_sequence(void* actions, int count);
-    int capture_screen_region(int x, int y, int w, int h, const char* filename);
-#ifdef __cplusplus
-}
-#endif
-
 // Класс для выполнения автоматизации в отдельном потоке
 class AutomationWorker : public QThread
 {
@@ -55,8 +43,6 @@ signals:
     
 private:
     QString m_script;
-    
-    void executeCommand(const QString& command);
 };
 
 // Основное окно приложения

@@ -5,14 +5,11 @@ TARGET = automator_qt
 TEMPLATE = app
 CONFIG += c++17
 
-# Пути к библиотеке automator
-INCLUDEPATH += ../lib
+# Пути к библиотекам
+INCLUDES += ../lib
 
 # Платформо-зависимые настройки
 win32 {
-    # Используем динамическую библиотеку automator
-    LIBS += -L../lib -lautomator
-    
     # Библиотеки WinAPI для функций эмуляции
     LIBS += -luser32 -lgdi32
     
