@@ -81,7 +81,7 @@ private slots:
     void onPythonOutput();
     void onPythonError();
     void findPython();
-    
+
 private:
     // Виджеты
     QTabWidget *m_tabWidget;
@@ -128,6 +128,7 @@ private:
     QString getScriptTemplate(const QString& name);
     QString getFileExtension() const;
     void cleanupTempFile();
+    bool copyWrapperToTempDir();
     QString createTempPythonFile(const QString& script);
 };
 
