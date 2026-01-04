@@ -9,15 +9,20 @@
 #include <QThread>
 #include <QMessageBox>
 #include <QApplication>
-#include <QScreen>
 #include <QPlainTextEdit>
 #include <QTextEdit>
 #include <QFileDialog>
-#include <QTextStream>
 #include <QMenuBar>
 #include <QMenu>
 #include <QComboBox>
 #include <QTimer>
+#include <QTabWidget>
+#include <QTextBrowser>
+#include <QDateTime>
+#include <QTemporaryFile>
+#include <QProcess>
+#include <QDir>
+#include <QUuid>
 
 // Внешние C-функции из библиотеки automator
 #ifdef __cplusplus
@@ -37,9 +42,11 @@ class AutomationWorker : public QThread
     Q_OBJECT
     
 public:
-    explicit AutomationWorker(const QString& script) : m_script(script) {}
+    explicit AutomationWorker(const QString& script) 
+        : m_script(script) 
+    {
+    }
     
-protected:
     void run() override;
     
 signals:
@@ -59,6 +66,7 @@ class AutomatorWidget : public QWidget
     
 public:
     explicit AutomatorWidget(QWidget *parent = nullptr);
+    ~AutomatorWidget();
     
 private slots:
     void startAutomation();
@@ -74,22 +82,33 @@ private slots:
     
     // Редактор
     void updateLineNumbers();
-    void showLineNumbers(bool show);
-    void changeFontSize(int size);
+    void changeFontSize(int index);
     void insertTemplate();
     
     // Запись действий
     void toggleRecording(bool checked);
     
+    // Python
+    void runPythonScript();
+    void stopPythonScript();
+    void onPythonFinished(int exitCode, QProcess::ExitStatus exitStatus);
+    void onPythonOutput();
+    void onPythonError();
+    void findPython();
+    
 private:
     // Виджеты
+    QTabWidget *m_tabWidget;
     QTextEdit *m_editor;
     QPlainTextEdit *m_lineNumbers;
+    QTextBrowser *m_outputBrowser;
     QPushButton *m_startButton;
     QPushButton *m_stopButton;
     QPushButton *m_recordButton;
     QPushButton *m_loadButton;
     QPushButton *m_saveButton;
+    QPushButton *m_pythonButton;
+    QPushButton *m_pythonStopButton;
     QLabel *m_statusLabel;
     QLabel *m_lineColLabel;
     QComboBox *m_fontSizeCombo;
@@ -99,12 +118,15 @@ private:
     QMenuBar *m_menuBar;
     QMenu *m_fileMenu;
     QMenu *m_editMenu;
-    QMenu *m_toolsMenu;
+    QMenu *m_runMenu;
     
     // Дополнительные
     AutomationWorker *m_worker;
+    QProcess *m_pythonProcess;
     QTimer *m_recordingTimer;
     QString m_currentFile;
+    QString m_pythonPath;
+    QString m_tempPythonFile;
     bool m_isRecording;
     bool m_isModified;
     
@@ -118,7 +140,9 @@ private:
     
     // Вспомогательные функции
     QString getScriptTemplate(const QString& name);
-    void highlightCurrentLine(int lineNumber);
+    QString getFileExtension() const;
+    void cleanupTempFile();
+    QString createTempPythonFile(const QString& script);
 };
 
 #endif // AUTOMATORWIDGET_H

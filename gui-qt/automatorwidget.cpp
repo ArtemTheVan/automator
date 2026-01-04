@@ -1,9 +1,10 @@
 #include "automatorwidget.h"
-#include <QDebug>
 #include <QScrollBar>
 #include <QTextBlock>
-#include <QStringConverter>
-#include <QRegularExpression>
+#include <QTextStream>
+#include <QDebug>
+#include <QFileInfo>
+#include <QStandardPaths>
 #include <windows.h>
 #include <vector>
 
@@ -118,27 +119,110 @@ void AutomationWorker::executeCommand(const QString& command)
 
 AutomatorWidget::AutomatorWidget(QWidget *parent) 
     : QWidget(parent)
+    , m_tabWidget(nullptr)
     , m_editor(nullptr)
     , m_lineNumbers(nullptr)
+    , m_outputBrowser(nullptr)
     , m_startButton(nullptr)
     , m_stopButton(nullptr)
     , m_recordButton(nullptr)
     , m_loadButton(nullptr)
     , m_saveButton(nullptr)
+    , m_pythonButton(nullptr)
+    , m_pythonStopButton(nullptr)
     , m_statusLabel(nullptr)
     , m_lineColLabel(nullptr)
     , m_fontSizeCombo(nullptr)
     , m_templateCombo(nullptr)
     , m_menuBar(nullptr)
     , m_worker(nullptr)
+    , m_pythonProcess(nullptr)
     , m_recordingTimer(nullptr)
     , m_currentFile("")
+    , m_pythonPath("python")
+    , m_tempPythonFile("")
     , m_isRecording(false)
     , m_isModified(false)
 {
     setupUI();
     setupMenu();
     setupEditor();
+    findPython(); // Найти Python при запуске
+}
+
+AutomatorWidget::~AutomatorWidget()
+{
+    if (m_worker && m_worker->isRunning()) {
+        m_worker->requestInterruption();
+        m_worker->wait();
+        delete m_worker;
+    }
+    
+    if (m_pythonProcess && m_pythonProcess->state() == QProcess::Running) {
+        m_pythonProcess->terminate();
+        m_pythonProcess->waitForFinished(1000);
+        delete m_pythonProcess;
+    }
+    
+    cleanupTempFile(); // Удалить временный файл
+}
+
+void AutomatorWidget::findPython()
+{
+    // Пытаемся найти Python
+    QStringList pythonPaths = {
+        "python",
+        "python3",
+        "py",
+        "C:/Python39/python.exe",
+        "C:/Python310/python.exe",
+        "C:/Python311/python.exe",
+        "C:/Python312/python.exe",
+        "C:/Program Files/Python39/python.exe",
+        "C:/Program Files/Python310/python.exe",
+        "C:/Program Files/Python311/python.exe",
+        "C:/Program Files/Python312/python.exe"
+    };
+    
+    for (const QString& path : pythonPaths) {
+        QProcess testProcess;
+        testProcess.start(path, {"--version"});
+        if (testProcess.waitForFinished(1000) && testProcess.exitCode() == 0) {
+            m_pythonPath = path;
+            m_statusLabel->setText(QString("Python найден: %1").arg(path));
+            return;
+        }
+    }
+    
+    m_statusLabel->setText("Python не найден. Установите Python и добавьте в PATH");
+}
+
+QString AutomatorWidget::createTempPythonFile(const QString& script)
+{
+    // Создаем временный файл в системной временной директории
+    QString tempDir = QDir::tempPath();
+    QString fileName = QString("%1/automator_python_%2.py")
+                      .arg(tempDir)
+                      .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    
+    QFile file(fileName);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return "";
+    }
+    
+    QTextStream out(&file);
+    out << script;
+    file.close();
+    
+    return fileName;
+}
+
+void AutomatorWidget::cleanupTempFile()
+{
+    if (!m_tempPythonFile.isEmpty() && QFile::exists(m_tempPythonFile)) {
+        QFile::remove(m_tempPythonFile);
+        m_tempPythonFile.clear();
+    }
 }
 
 void AutomatorWidget::setupUI()
@@ -177,8 +261,13 @@ void AutomatorWidget::setupUI()
     topLayout->addWidget(m_templateCombo);
     topLayout->addStretch();
     
-    // Область редактора с номерами строк
-    QHBoxLayout *editorLayout = new QHBoxLayout();
+    // Область редактора и вывода
+    m_tabWidget = new QTabWidget();
+    
+    // Вкладка редактора
+    QWidget *editorTab = new QWidget();
+    QHBoxLayout *editorLayout = new QHBoxLayout(editorTab);
+    editorLayout->setContentsMargins(0, 0, 0, 0);
     
     m_lineNumbers = new QPlainTextEdit();
     m_lineNumbers->setReadOnly(true);
@@ -206,6 +295,14 @@ void AutomatorWidget::setupUI()
     editorLayout->addWidget(m_lineNumbers);
     editorLayout->addWidget(m_editor, 1);
     
+    // Вкладка вывода
+    m_outputBrowser = new QTextBrowser();
+    m_outputBrowser->setFont(QFont("Consolas", 10));
+    m_outputBrowser->setStyleSheet("QTextBrowser { background-color: black; color: white; }");
+    
+    m_tabWidget->addTab(editorTab, "Редактор");
+    m_tabWidget->addTab(m_outputBrowser, "Вывод");
+    
     // Нижняя панель кнопок
     QHBoxLayout *buttonLayout = new QHBoxLayout();
     
@@ -220,6 +317,13 @@ void AutomatorWidget::setupUI()
     m_saveButton = new QPushButton("💾 Сохранить");
     connect(m_saveButton, &QPushButton::clicked, this, &AutomatorWidget::saveScript);
     
+    m_pythonButton = new QPushButton("🐍 Выполнить Python");
+    connect(m_pythonButton, &QPushButton::clicked, this, &AutomatorWidget::runPythonScript);
+    
+    m_pythonStopButton = new QPushButton("⏹ Стоп Python");
+    m_pythonStopButton->setEnabled(false);
+    connect(m_pythonStopButton, &QPushButton::clicked, this, &AutomatorWidget::stopPythonScript);
+    
     m_stopButton = new QPushButton("⏹ Стоп");
     m_stopButton->setEnabled(false);
     connect(m_stopButton, &QPushButton::clicked, this, &AutomatorWidget::stopAutomation);
@@ -231,6 +335,8 @@ void AutomatorWidget::setupUI()
     buttonLayout->addWidget(m_loadButton);
     buttonLayout->addWidget(m_saveButton);
     buttonLayout->addStretch();
+    buttonLayout->addWidget(m_pythonButton);
+    buttonLayout->addWidget(m_pythonStopButton);
     buttonLayout->addWidget(m_stopButton);
     buttonLayout->addWidget(m_startButton);
     
@@ -247,7 +353,7 @@ void AutomatorWidget::setupUI()
     
     // Сборка интерфейса
     mainLayout->addLayout(topLayout);
-    mainLayout->addLayout(editorLayout, 1);
+    mainLayout->addWidget(m_tabWidget, 1);
     mainLayout->addLayout(buttonLayout);
     mainLayout->addLayout(statusLayout);
     
@@ -261,13 +367,13 @@ void AutomatorWidget::setupUI()
     
     // Загружаем пример скрипта
     QString exampleScript = 
-        "# Пример скрипта автоматизации\n"
-        "# ============================\n\n"
-        "SLEEP 2000\n"
-        "KEYSTROKE \"Hello World!\"\n"
-        "CLICK 960, 540\n"
-        "SLEEP 1000\n"
-        "CAPTURE 0, 0, 1920, 1080, screenshot.png\n";
+        "# Пример Python скрипта\n"
+        "import time\n"
+        "print('Hello from Python!')\n"
+        "for i in range(5):\n"
+        "    print(f'Counting: {i+1}')\n"
+        "    time.sleep(1)\n"
+        "print('Done!')\n";
     
     m_editor->setPlainText(exampleScript);
     updateLineNumbers();
@@ -323,6 +429,23 @@ void AutomatorWidget::setupMenu()
     QAction *pasteAction = m_editMenu->addAction("Вставить");
     pasteAction->setShortcut(QKeySequence::Paste);
     connect(pasteAction, &QAction::triggered, m_editor, &QTextEdit::paste);
+    
+    m_runMenu = m_menuBar->addMenu("Выполнение");
+    
+    QAction *runAction = m_runMenu->addAction("Выполнить скрипт");
+    runAction->setShortcut(QKeySequence("F5"));
+    connect(runAction, &QAction::triggered, this, &AutomatorWidget::startAutomation);
+    
+    QAction *runPythonAction = m_runMenu->addAction("Выполнить Python");
+    runPythonAction->setShortcut(QKeySequence("Ctrl+F5"));
+    connect(runPythonAction, &QAction::triggered, this, &AutomatorWidget::runPythonScript);
+    
+    QAction *stopAction = m_runMenu->addAction("Остановить выполнение");
+    stopAction->setShortcut(QKeySequence("Shift+F5"));
+    connect(stopAction, &QAction::triggered, this, &AutomatorWidget::stopAutomation);
+    
+    QAction *findPythonAction = m_runMenu->addAction("Найти Python");
+    connect(findPythonAction, &QAction::triggered, this, &AutomatorWidget::findPython);
 }
 
 void AutomatorWidget::setupEditor()
@@ -349,6 +472,7 @@ void AutomatorWidget::startAutomation()
     
     m_startButton->setEnabled(false);
     m_stopButton->setEnabled(true);
+    m_pythonButton->setEnabled(false);
     m_recordButton->setEnabled(false);
     m_loadButton->setEnabled(false);
     m_saveButton->setEnabled(false);
@@ -360,10 +484,135 @@ void AutomatorWidget::startAutomation()
             this, &AutomatorWidget::onAutomationFinished);
     connect(m_worker, &AutomationWorker::statusChanged,
             this, &AutomatorWidget::updateStatus);
-    connect(m_worker, &AutomationWorker::finished,
+    connect(m_worker, &QThread::finished,
             m_worker, &QObject::deleteLater);
+    connect(m_worker, &QThread::finished, [this]() {
+        m_worker = nullptr;
+    });
     
     m_worker->start();
+}
+
+void AutomatorWidget::runPythonScript()
+{
+    QString script = m_editor->toPlainText();
+    if (script.isEmpty()) {
+        QMessageBox::warning(this, "Ошибка", "Скрипт пуст!");
+        return;
+    }
+    
+    // Очищаем предыдущий временный файл
+    cleanupTempFile();
+    
+    // Создаем новый временный файл
+    m_tempPythonFile = createTempPythonFile(script);
+    if (m_tempPythonFile.isEmpty()) {
+        m_outputBrowser->append("Ошибка: Не удалось создать временный файл");
+        return;
+    }
+    
+    m_pythonButton->setEnabled(false);
+    m_pythonStopButton->setEnabled(true);
+    m_startButton->setEnabled(false);
+    m_stopButton->setEnabled(false);
+    m_recordButton->setEnabled(false);
+    m_loadButton->setEnabled(false);
+    m_saveButton->setEnabled(false);
+    m_statusLabel->setText("Выполнение Python скрипта...");
+    m_statusLabel->setStyleSheet("QLabel { background-color: #ccffcc; color: black; }");
+    
+    // Очищаем вывод
+    m_outputBrowser->clear();
+    m_outputBrowser->append("=== Запуск Python скрипта ===");
+    m_outputBrowser->append(QString("Используется Python: %1").arg(m_pythonPath));
+    m_outputBrowser->append(QString("Файл скрипта: %1").arg(m_tempPythonFile));
+    
+    // Создаем процесс Python
+    m_pythonProcess = new QProcess(this);
+    m_pythonProcess->setProcessChannelMode(QProcess::MergedChannels);
+    
+    // Подключаем сигналы
+    connect(m_pythonProcess, &QProcess::readyReadStandardOutput,
+            this, &AutomatorWidget::onPythonOutput);
+    connect(m_pythonProcess, &QProcess::readyReadStandardError,
+            this, &AutomatorWidget::onPythonError);
+    connect(m_pythonProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, &AutomatorWidget::onPythonFinished);
+    
+    // Запускаем Python
+    m_pythonProcess->start(m_pythonPath, {m_tempPythonFile});
+    
+    if (!m_pythonProcess->waitForStarted(3000)) {
+        m_outputBrowser->append("Ошибка: Не удалось запустить Python. Убедитесь, что Python установлен и добавлен в PATH");
+        m_outputBrowser->append("Попробуйте использовать действие 'Найти Python' в меню 'Выполнение'");
+        cleanupTempFile();
+        onPythonFinished(-1, QProcess::CrashExit);
+        return;
+    }
+}
+
+void AutomatorWidget::stopPythonScript()
+{
+    if (m_pythonProcess && m_pythonProcess->state() == QProcess::Running) {
+        m_pythonProcess->terminate();
+        if (!m_pythonProcess->waitForFinished(1000)) {
+            m_pythonProcess->kill();
+        }
+    }
+}
+
+void AutomatorWidget::onPythonFinished(int exitCode, QProcess::ExitStatus exitStatus)
+{
+    if (exitStatus == QProcess::CrashExit) {
+        m_outputBrowser->append("=== Python скрипт завершился аварийно ===");
+    } else {
+        m_outputBrowser->append(QString("=== Python скрипт завершен с кодом %1 ===").arg(exitCode));
+    }
+    
+    m_pythonButton->setEnabled(true);
+    m_pythonStopButton->setEnabled(false);
+    m_startButton->setEnabled(true);
+    m_recordButton->setEnabled(true);
+    m_loadButton->setEnabled(true);
+    m_saveButton->setEnabled(true);
+    
+    if (exitCode == 0 && exitStatus == QProcess::NormalExit) {
+        m_statusLabel->setText("Python скрипт выполнен успешно");
+        m_statusLabel->setStyleSheet("QLabel { background-color: #ccffcc; color: black; }");
+    } else {
+        m_statusLabel->setText("Python скрипт завершился с ошибкой");
+        m_statusLabel->setStyleSheet("QLabel { background-color: #ffe0e0; color: black; }");
+    }
+    
+    // Удаляем временный файл
+    cleanupTempFile();
+    
+    if (m_pythonProcess) {
+        m_pythonProcess->deleteLater();
+        m_pythonProcess = nullptr;
+    }
+}
+
+void AutomatorWidget::onPythonOutput()
+{
+    if (m_pythonProcess) {
+        QByteArray output = m_pythonProcess->readAllStandardOutput();
+        QString outputStr = QString::fromUtf8(output).trimmed();
+        if (!outputStr.isEmpty()) {
+            m_outputBrowser->append(outputStr);
+        }
+    }
+}
+
+void AutomatorWidget::onPythonError()
+{
+    if (m_pythonProcess) {
+        QByteArray error = m_pythonProcess->readAllStandardError();
+        QString errorStr = QString::fromUtf8(error).trimmed();
+        if (!errorStr.isEmpty()) {
+            m_outputBrowser->append("Ошибка: " + errorStr);
+        }
+    }
 }
 
 void AutomatorWidget::stopAutomation()
@@ -378,6 +627,7 @@ void AutomatorWidget::onAutomationFinished()
 {
     m_startButton->setEnabled(true);
     m_stopButton->setEnabled(false);
+    m_pythonButton->setEnabled(true);
     m_recordButton->setEnabled(true);
     m_loadButton->setEnabled(true);
     m_saveButton->setEnabled(true);
@@ -385,7 +635,6 @@ void AutomatorWidget::onAutomationFinished()
     m_statusLabel->setStyleSheet("QLabel { background-color: #ccffcc; color: black; }");
     
     if (m_worker) {
-        m_worker->deleteLater();
         m_worker = nullptr;
     }
 }
@@ -432,7 +681,7 @@ void AutomatorWidget::loadScript()
     
     QString fileName = QFileDialog::getOpenFileName(this, "Загрузить скрипт", 
                                                    QDir::homePath(), 
-                                                   "Скрипты (*.txt *.auto);;Все файлы (*)");
+                                                   "Скрипты (*.py *.txt *.auto);;Все файлы (*)");
     if (!fileName.isEmpty()) {
         loadScriptFile(fileName);
     }
@@ -450,8 +699,8 @@ void AutomatorWidget::saveScript()
 void AutomatorWidget::saveScriptAs()
 {
     QString fileName = QFileDialog::getSaveFileName(this, "Сохранить скрипт",
-                                                   QDir::homePath() + "/untitled.auto",
-                                                   "Скрипты (*.auto);;Текстовые файлы (*.txt);;Все файлы (*)");
+                                                   QDir::homePath() + "/untitled.py",
+                                                   "Python скрипты (*.py);;Скрипты (*.txt *.auto);;Все файлы (*)");
     if (!fileName.isEmpty()) {
         saveScriptFile(fileName);
     }
@@ -471,11 +720,6 @@ void AutomatorWidget::updateLineNumbers()
     QFontMetrics fm(m_editor->font());
     int docHeight = fm.lineSpacing() * blockCount + 10;
     m_lineNumbers->setMinimumHeight(docHeight);
-}
-
-void AutomatorWidget::showLineNumbers(bool show)
-{
-    m_lineNumbers->setVisible(show);
 }
 
 void AutomatorWidget::changeFontSize(int index)
@@ -536,11 +780,6 @@ void AutomatorWidget::loadScriptFile(const QString& fileName)
     }
     
     QTextStream in(&file);
-    #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    in.setEncoding(QStringConverter::Utf8);
-    #else
-    in.setCodec("UTF-8");
-    #endif
     m_editor->setPlainText(in.readAll());
     file.close();
     
@@ -561,11 +800,6 @@ void AutomatorWidget::saveScriptFile(const QString& fileName)
     }
     
     QTextStream out(&file);
-    #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    out.setEncoding(QStringConverter::Utf8);
-    #else
-    out.setCodec("UTF-8");
-    #endif
     out << m_editor->toPlainText();
     file.close();
     
@@ -591,14 +825,19 @@ void AutomatorWidget::updateTitle()
 QString AutomatorWidget::getScriptTemplate(const QString& name)
 {
     if (name == "text_click") {
-        return "SLEEP 2000\nKEYSTROKE \"Hello World!\"\nCLICK 500, 300\nSLEEP 1000";
+        return "# Automator Script\nSLEEP 2000\nKEYSTROKE \"Hello World!\"\nCLICK 500, 300\nSLEEP 1000";
     }
     else if (name == "screenshot") {
-        return "SLEEP 3000\nCAPTURE 0, 0, 1920, 1080, screenshot.png";
+        return "# Automator Script\nSLEEP 3000\nCAPTURE 0, 0, 1920, 1080, screenshot.png";
     }
     else if (name == "mouse_sequence") {
-        return "SLEEP 2000\nMOUSE_SEQUENCE 100,100,LEFTDOWN;200,200,MOVE;200,200,LEFTUP";
+        return "# Automator Script\nSLEEP 2000\nMOUSE_SEQUENCE 100,100,LEFTDOWN;200,200,MOVE;200,200,LEFTUP";
     }
     
     return "";
+}
+
+QString AutomatorWidget::getFileExtension() const
+{
+    return "auto";
 }

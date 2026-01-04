@@ -1,4 +1,4 @@
-QT += widgets
+QT += widgets core
 
 # Настройки проекта
 TARGET = automator_qt
@@ -7,10 +7,12 @@ CONFIG += c++17
 
 # Пути к библиотеке automator
 INCLUDEPATH += ../lib
-LIBS += -L../lib -lautomator
 
 # Платформо-зависимые настройки
 win32 {
+    # Используем динамическую библиотеку automator
+    LIBS += -L../lib -lautomator
+    
     # Библиотеки WinAPI для функций эмуляции
     LIBS += -luser32 -lgdi32
     
