@@ -44,3 +44,12 @@
 
 # debug information files
 *.dwo
+
+# qmake files
+.qmake.stash
+Makefile
+Makefile.Debug
+Makefile.Release
+moc_*.cpp
+moc_*.h
+moc_*.o
