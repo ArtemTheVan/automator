@@ -3,6 +3,8 @@
 
 #include "keyboard.h"
 #include "mouse.h"
+#include "screen.h"
+#include "ocr.h"
 
 // #ifdef _WIN32
 //     #include <windows.h>
