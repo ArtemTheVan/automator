@@ -5,6 +5,7 @@
 #include <QDebug>
 #include <QFileInfo>
 #include <QStandardPaths>
+#include <QAction>
 #include <windows.h>
 #include <vector>
 
@@ -32,8 +33,6 @@ void AutomationWorker::run()
             continue;
         }
 
-        // executeCommand(trimmed);
-
         if (QThread::currentThread()->isInterruptionRequested())
         {
             emit statusChanged("Выполнение прервано пользователем");
@@ -48,12 +47,30 @@ void AutomationWorker::run()
 // =========== AutomatorWidget ===========
 
 AutomatorWidget::AutomatorWidget(QWidget *parent)
-    : QWidget(parent), m_tabWidget(nullptr), m_editor(nullptr), m_lineNumbers(nullptr), m_outputBrowser(nullptr), m_startButton(nullptr), m_stopButton(nullptr), m_recordButton(nullptr), m_loadButton(nullptr), m_saveButton(nullptr), m_pythonButton(nullptr), m_pythonStopButton(nullptr), m_statusLabel(nullptr), m_lineColLabel(nullptr), m_fontSizeCombo(nullptr), m_templateCombo(nullptr), m_menuBar(nullptr), m_worker(nullptr), m_pythonProcess(nullptr), m_recordingTimer(nullptr), m_currentFile(""), m_pythonPath("python"), m_tempPythonFile(""), m_isRecording(false), m_isModified(false)
+    : QWidget(parent), m_tabWidget(nullptr), m_editor(nullptr), m_lineNumbers(nullptr), m_outputBrowser(nullptr),
+      m_startButton(nullptr), m_stopButton(nullptr), m_recordButton(nullptr), m_loadButton(nullptr),
+      m_saveButton(nullptr), m_pythonButton(nullptr), m_pythonStopButton(nullptr), m_statusLabel(nullptr),
+      m_lineColLabel(nullptr), m_fontSizeCombo(nullptr), m_templateCombo(nullptr), m_menuBar(nullptr),
+      m_worker(nullptr), m_pythonProcess(nullptr), m_recordingTimer(nullptr), m_settings(nullptr),
+      m_currentFile(""), m_pythonPath("python"), m_tempPythonFile(""), m_isRecording(false), m_isModified(false)
 {
+    // Инициализация настроек
+    m_settings = new QSettings("Automator", "ScriptEditor", this);
+
+    // Загружаем список последних файлов
+    m_recentFiles = m_settings->value("recentFiles").toStringList();
+
     setupUI();
     setupMenu();
     setupEditor();
     findPython(); // Найти Python при запуске
+
+    // Пытаемся загрузить последний открытый файл
+    QString lastFile = m_settings->value("lastOpenedFile").toString();
+    if (!lastFile.isEmpty() && QFile::exists(lastFile))
+    {
+        loadScriptFile(lastFile);
+    }
 }
 
 AutomatorWidget::~AutomatorWidget()
@@ -152,7 +169,40 @@ QString AutomatorWidget::createTempPythonFile(const QString &script)
     }
 
     QTextStream out(&file);
+
+    // Добавляем импорт модуля wrapper_automator из временной директории
+    out << "import sys\n";
+    out << "import os\n";
+    out << "sys.path.insert(0, r'" << tempDir << "')\n";
+    out << "\n";
+    out << "try:\n";
+    out << "    from wrapper_automator import automator\n";
+    out << "    print('Модуль wrapper_automator успешно загружен')\n";
+    out << "except ImportError as e:\n";
+    out << "    print(f'Ошибка импорта wrapper_automator: {e}')\n";
+    out << "    print('Попытка загрузить из других путей...')\n";
+    out << "    # Добавляем дополнительные пути\n";
+    out << "    additional_paths = [\n";
+    out << "        '.',\n";
+    out << "        '..',\n";
+    out << "        '../scripts',\n";
+    out << "        'D:/Projects/automator/scripts',\n";
+    out << "    ]\n";
+    out << "    for path in additional_paths:\n";
+    out << "        if os.path.exists(path):\n";
+    out << "            abs_path = os.path.abspath(path)\n";
+    out << "            if abs_path not in sys.path:\n";
+    out << "                sys.path.append(abs_path)\n";
+    out << "    try:\n";
+    out << "        from wrapper_automator import automator\n";
+    out << "        print('Модуль wrapper_automator загружен из дополнительных путей')\n";
+    out << "    except ImportError:\n";
+    out << "        print('Не удалось загрузить wrapper_automator')\n";
+    out << "        sys.exit(1)\n";
+    out << "\n";
+    out << "# =========== Начало пользовательского скрипта ===========\n\n";
     out << script;
+
     file.close();
 
     return fileName;
@@ -194,6 +244,8 @@ void AutomatorWidget::setupUI()
     m_templateCombo->addItem("Текст и клик", "text_click");
     m_templateCombo->addItem("Скриншот", "screenshot");
     m_templateCombo->addItem("Последовательность мыши", "mouse_sequence");
+    m_templateCombo->addItem("Запуск приложения", "start_app");
+    m_templateCombo->addItem("Заполнение формы", "fill_form");
     connect(m_templateCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int index)
             { if (index > 0) insertTemplate(); });
@@ -309,17 +361,31 @@ void AutomatorWidget::setupUI()
             m_statusLabel->setText("Запись...");
         } });
 
-    // Загружаем пример скрипта
-    QString exampleScript =
-        "# Пример Python скрипта\n"
-        "import time\n"
-        "print('Hello from Python!')\n"
-        "for i in range(5):\n"
-        "    print(f'Counting: {i+1}')\n"
-        "    time.sleep(1)\n"
-        "print('Done!')\n";
+    // Загружаем пример скрипта только если нет последнего файла
+    if (m_currentFile.isEmpty())
+    {
+        QString exampleScript =
+            "# Пример Python скрипта для automator\n"
+            "# Использует глобальный экземпляр automator\n\n"
+            "import time\n\n"
+            "automator.info('Начинаю выполнение скрипта...')\n\n"
+            "# Пауза 2 секунды перед началом\n"
+            "time.sleep(2)\n\n"
+            "# Ввод текста\n"
+            "automator.keystroke('Hello from Python!')\n"
+            "automator.sleep(1)\n\n"
+            "# Клик мыши\n"
+            "automator.click(500, 300)\n"
+            "automator.info('Клик выполнен')\n\n"
+            "# Еще пауза\n"
+            "time.sleep(1)\n\n"
+            "# Ввод еще текста\n"
+            "automator.keystroke('Это автоматизированное сообщение.')\n\n"
+            "automator.info('Скрипт выполнен успешно!')\n";
 
-    m_editor->setPlainText(exampleScript);
+        m_editor->setPlainText(exampleScript);
+    }
+
     updateLineNumbers();
     updateTitle();
 }
@@ -343,6 +409,12 @@ void AutomatorWidget::setupMenu()
     QAction *saveAsAction = m_fileMenu->addAction("Сохранить как...");
     saveAsAction->setShortcut(QKeySequence::SaveAs);
     connect(saveAsAction, &QAction::triggered, this, &AutomatorWidget::saveScriptAs);
+
+    m_fileMenu->addSeparator();
+
+    // Меню недавних файлов
+    m_recentFilesMenu = m_fileMenu->addMenu("Недавние файлы");
+    updateRecentFilesMenu();
 
     m_fileMenu->addSeparator();
 
@@ -448,8 +520,12 @@ void AutomatorWidget::runPythonScript()
 
     // Очищаем предыдущий временный файл
     cleanupTempFile();
-    
-    copyWrapperToTempDir();
+
+    // Копируем wrapper_automator.py во временную директорию
+    if (!copyWrapperToTempDir())
+    {
+        m_outputBrowser->append("Предупреждение: Не удалось скопировать wrapper_automator.py. Возможно, он уже существует.");
+    }
 
     // Создаем новый временный файл
     m_tempPythonFile = createTempPythonFile(script);
@@ -631,6 +707,9 @@ void AutomatorWidget::newScript()
     m_isModified = false;
     updateTitle();
     updateLineNumbers();
+
+    // Обновляем статус
+    m_statusLabel->setText("Создан новый скрипт");
 }
 
 void AutomatorWidget::loadScript()
@@ -651,9 +730,12 @@ void AutomatorWidget::loadScript()
         }
     }
 
+    // Используем последнюю директорию вместо QDir::homePath()
+    QString lastDir = getLastDirectory();
+
     QString fileName = QFileDialog::getOpenFileName(this, "Загрузить скрипт",
-                                                    QDir::homePath(),
-                                                    "Скрипты (*.py *.txt *.auto);;Все файлы (*)");
+                                                    lastDir, // Используем последнюю директорию
+                                                    "Python скрипты (*.py);;Текстовые файлы (*.txt);;Все файлы (*)");
     if (!fileName.isEmpty())
     {
         loadScriptFile(fileName);
@@ -674,9 +756,20 @@ void AutomatorWidget::saveScript()
 
 void AutomatorWidget::saveScriptAs()
 {
+    // Используем последнюю директорию вместо QDir::homePath()
+    QString lastDir = getLastDirectory();
+    QString defaultFile = lastDir + "/untitled.py";
+
+    // Если есть текущий файл, предлагаем сохранить в той же директории с его именем
+    if (!m_currentFile.isEmpty())
+    {
+        QFileInfo currentFileInfo(m_currentFile);
+        defaultFile = lastDir + "/" + currentFileInfo.fileName();
+    }
+
     QString fileName = QFileDialog::getSaveFileName(this, "Сохранить скрипт",
-                                                    QDir::homePath() + "/untitled.py",
-                                                    "Python скрипты (*.py);;Скрипты (*.txt *.auto);;Все файлы (*)");
+                                                    defaultFile,
+                                                    "Python скрипты (*.py);;Текстовые файлы (*.txt);;Все файлы (*)");
     if (!fileName.isEmpty())
     {
         saveScriptFile(fileName);
@@ -753,6 +846,89 @@ void AutomatorWidget::toggleRecording(bool checked)
 
 // =========== Вспомогательные функции ===========
 
+void AutomatorWidget::addToRecentFiles(const QString &fileName)
+{
+    // Удаляем файл из списка, если он уже есть
+    m_recentFiles.removeAll(fileName);
+
+    // Добавляем файл в начало списка
+    m_recentFiles.prepend(fileName);
+
+    // Ограничиваем список 10 файлами
+    while (m_recentFiles.size() > 10)
+    {
+        m_recentFiles.removeLast();
+    }
+
+    // Сохраняем список в настройках
+    m_settings->setValue("recentFiles", m_recentFiles);
+    m_settings->setValue("lastOpenedFile", fileName);
+
+    // Обновляем меню
+    updateRecentFilesMenu();
+}
+
+void AutomatorWidget::updateRecentFilesMenu()
+{
+    m_recentFilesMenu->clear();
+
+    if (m_recentFiles.isEmpty())
+    {
+        QAction *noFilesAction = m_recentFilesMenu->addAction("Нет недавних файлов");
+        noFilesAction->setEnabled(false);
+        return;
+    }
+
+    for (int i = 0; i < m_recentFiles.size(); ++i)
+    {
+        QString displayName = QString("%1. %2").arg(i + 1).arg(QFileInfo(m_recentFiles[i]).fileName());
+        QAction *fileAction = m_recentFilesMenu->addAction(displayName);
+
+        // Сохраняем полный путь в данных действия
+        fileAction->setData(m_recentFiles[i]);
+
+        connect(fileAction, &QAction::triggered, this, &AutomatorWidget::loadRecentFile);
+    }
+
+    m_recentFilesMenu->addSeparator();
+
+    QAction *clearAction = m_recentFilesMenu->addAction("Очистить список");
+    connect(clearAction, &QAction::triggered, [this]()
+            {
+        m_recentFiles.clear();
+        m_settings->setValue("recentFiles", m_recentFiles);
+        updateRecentFilesMenu(); });
+}
+
+void AutomatorWidget::loadRecentFile()
+{
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (!action)
+        return;
+
+    QString fileName = action->data().toString();
+    if (fileName.isEmpty())
+        return;
+
+    if (m_isModified)
+    {
+        QMessageBox::StandardButton reply = QMessageBox::question(this, "Загрузить скрипт",
+                                                                  "Сохранить текущий скрипт?",
+                                                                  QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
+
+        if (reply == QMessageBox::Yes)
+        {
+            saveScript();
+        }
+        else if (reply == QMessageBox::Cancel)
+        {
+            return;
+        }
+    }
+
+    loadScriptFile(fileName);
+}
+
 void AutomatorWidget::loadScriptFile(const QString &fileName)
 {
     QFile file(fileName);
@@ -770,6 +946,12 @@ void AutomatorWidget::loadScriptFile(const QString &fileName)
     m_isModified = false;
     updateTitle();
     updateLineNumbers();
+
+    // Добавляем файл в список недавних
+    addToRecentFiles(fileName);
+
+    // Обновляем последнюю директорию
+    updateLastDirectory(fileName);
 
     m_statusLabel->setText(QString("Загружен: %1").arg(QFileInfo(fileName).fileName()));
 }
@@ -790,6 +972,12 @@ void AutomatorWidget::saveScriptFile(const QString &fileName)
     m_currentFile = fileName;
     m_isModified = false;
     updateTitle();
+
+    // Добавляем файл в список недавних
+    addToRecentFiles(fileName);
+
+    // Обновляем последнюю директорию
+    updateLastDirectory(fileName);
 
     m_statusLabel->setText(QString("Сохранен: %1").arg(QFileInfo(fileName).fileName()));
 }
@@ -812,15 +1000,138 @@ QString AutomatorWidget::getScriptTemplate(const QString &name)
 {
     if (name == "text_click")
     {
-        return "# Automator Script\nSLEEP 2000\nKEYSTROKE \"Hello World!\"\nCLICK 500, 300\nSLEEP 1000";
+        return "# Шаблон: Ввод текста и клик мыши\n"
+               "import time\n"
+               "from wrapper_automator import automator\n\n"
+               "def main():\n"
+               "    automator.info('Начинаю выполнение скрипта...')\n"
+               "    \n"
+               "    # Пауза перед началом\n"
+               "    time.sleep(2)\n"
+               "    \n"
+               "    # Ввод текста\n"
+               "    automator.keystroke('Hello World!')\n"
+               "    automator.sleep(0.5)\n"
+               "    \n"
+               "    # Клик мыши\n"
+               "    automator.click(500, 300)\n"
+               "    automator.info('Текст введен и клик выполнен')\n"
+               "    \n"
+               "if __name__ == '__main__':\n"
+               "    main()";
     }
     else if (name == "screenshot")
     {
-        return "# Automator Script\nSLEEP 3000\nCAPTURE 0, 0, 1920, 1080, screenshot.png";
+        return "# Шаблон: Захват скриншота\n"
+               "import time\n"
+               "import os\n"
+               "from wrapper_automator import automator\n"
+               "from datetime import datetime\n\n"
+               "def main():\n"
+               "    automator.info('Захват скриншота...')\n"
+               "    \n"
+               "    # Пауза перед захватом\n"
+               "    time.sleep(3)\n"
+               "    \n"
+               "    # Генерируем имя файла с датой и временем\n"
+               "    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')\n"
+               "    filename = f'screenshot_{timestamp}.png'\n"
+               "    \n"
+               "    # Захват всего экрана (подставьте свои координаты)\n"
+               "    result = automator.capture_screen(0, 0, 1920, 1080, filename)\n"
+               "    \n"
+               "    if result == 0:\n"
+               "        automator.info(f'Скриншот сохранен как: {filename}')\n"
+               "    else:\n"
+               "        automator.error('Ошибка при захвате скриншота')\n"
+               "    \n"
+               "if __name__ == '__main__':\n"
+               "    main()";
     }
     else if (name == "mouse_sequence")
     {
-        return "# Automator Script\nSLEEP 2000\nMOUSE_SEQUENCE 100,100,LEFTDOWN;200,200,MOVE;200,200,LEFTUP";
+        return "# Шаблон: Последовательность действий мыши\n"
+               "import time\n"
+               "from wrapper_automator import automator, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP\n\n"
+               "def main():\n"
+               "    automator.info('Выполняю последовательность действий мыши...')\n"
+               "    \n"
+               "    # Пауза перед началом\n"
+               "    time.sleep(2)\n"
+               "    \n"
+               "    # Определяем последовательность действий\n"
+               "    actions = [\n"
+               "        (100, 100, MOUSEEVENTF_LEFTDOWN),   # Нажатие левой кнопки\n"
+               "        (200, 200, 0),                       # Перемещение с зажатой кнопкой\n"
+               "        (200, 200, MOUSEEVENTF_LEFTUP)      # Отпускание кнопки\n"
+               "    ]\n"
+               "    \n"
+               "    # Выполняем последовательность\n"
+               "    automator.mouse_sequence(actions)\n"
+               "    automator.info('Последовательность выполнена')\n"
+               "    \n"
+               "if __name__ == '__main__':\n"
+               "    main()";
+    }
+    else if (name == "start_app")
+    {
+        return "# Шаблон: Запуск приложения\n"
+               "import time\n"
+               "import subprocess\n"
+               "from wrapper_automator import automator\n\n"
+               "def main():\n"
+               "    automator.info('Запуск приложения...')\n"
+               "    \n"
+               "    # Запускаем приложение (например, Блокнот)\n"
+               "    try:\n"
+               "        subprocess.Popen(['notepad.exe'])\n"
+               "        automator.info('Приложение запущено')\n"
+               "    except Exception as e:\n"
+               "        automator.error(f'Ошибка запуска: {e}')\n"
+               "    \n"
+               "    # Ждем немного\n"
+               "    time.sleep(2)\n"
+               "    \n"
+               "    # Вводим текст в открывшееся окно\n"
+               "    automator.keystroke('Привет от Python!')\n"
+               "    \n"
+               "if __name__ == '__main__':\n"
+               "    main()";
+    }
+    else if (name == "fill_form")
+    {
+        return "# Шаблон: Заполнение формы\n"
+               "import time\n"
+               "from wrapper_automator import automator\n\n"
+               "def main():\n"
+               "    automator.info('Заполнение формы...')\n"
+               "    \n"
+               "    # Пауза перед началом\n"
+               "    time.sleep(2)\n"
+               "    \n"
+               "    # Данные для заполнения\n"
+               "    form_data = {\n"
+               "        'Имя': 'Иван',\n"
+               "        'Фамилия': 'Петров',\n"
+               "        'Email': 'ivan@example.com',\n"
+               "        'Телефон': '+7 999 123-45-67'\n"
+               "    }\n"
+               "    \n"
+               "    # Заполняем поля формы\n"
+               "    for field_name, value in form_data.items():\n"
+               "        automator.keystroke(field_name)\n"
+               "        automator.sleep(0.2)\n"
+               "        automator.keystroke('\\t')  # Tab для перехода к полю ввода\n"
+               "        automator.sleep(0.2)\n"
+               "        automator.keystroke(value)\n"
+               "        automator.sleep(0.3)\n"
+               "        automator.keystroke('\\t')  # Tab для перехода к следующему полю\n"
+               "        automator.sleep(0.2)\n"
+               "    \n"
+               "    automator.info('Форма заполнена')\n"
+               "    \n"
+               "if __name__ == '__main__':\n"
+               "    main()";
     }
 
     return "";
@@ -828,5 +1139,51 @@ QString AutomatorWidget::getScriptTemplate(const QString &name)
 
 QString AutomatorWidget::getFileExtension() const
 {
-    return "auto";
+    return "py";
+}
+
+QString AutomatorWidget::getLastDirectory() const
+{
+    // Получаем последнюю директорию из настроек
+    QString lastDir = m_settings->value("lastDirectory", QDir::homePath()).toString();
+
+    // Проверяем, что директория существует
+    QDir dir(lastDir);
+    if (!dir.exists())
+    {
+        return QDir::homePath();
+    }
+
+    return lastDir;
+}
+
+void AutomatorWidget::setLastDirectory(const QString &path)
+{
+    QFileInfo fileInfo(path);
+    QString dirPath;
+
+    if (fileInfo.isDir())
+    {
+        dirPath = path;
+    }
+    else
+    {
+        dirPath = fileInfo.absolutePath();
+    }
+
+    // Сохраняем только если директория существует
+    QDir dir(dirPath);
+    if (dir.exists())
+    {
+        m_settings->setValue("lastDirectory", dirPath);
+    }
+}
+
+void AutomatorWidget::updateLastDirectory(const QString &filePath)
+{
+    if (!filePath.isEmpty())
+    {
+        QFileInfo fileInfo(filePath);
+        setLastDirectory(fileInfo.absolutePath());
+    }
 }
