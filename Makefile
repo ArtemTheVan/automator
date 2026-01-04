@@ -19,7 +19,7 @@ lib:
 # Сборка Qt GUI (требует установленного Qt)
 qt: lib
 	@echo "Сборка Qt приложения..."
-	cd $(GUI_QT_DIR) && qmake Automator.pro
+	cd $(GUI_QT_DIR) && qmake automator.pro
 	cd $(GUI_QT_DIR) && $(MAKE)
 	@echo "Qt приложение собрано: $(GUI_QT_DIR)/automator_qt.exe"
 

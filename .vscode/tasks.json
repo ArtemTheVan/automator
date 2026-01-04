@@ -6,7 +6,7 @@
             "type": "shell",
             "command": "qmake",
             "args": [
-                "${workspaceFolder}/gui-qt/Automator.pro",
+                "${workspaceFolder}/gui-qt/automator.pro",
                 "-spec",
                 "win32-g++",
                 "CONFIG+=debug",
