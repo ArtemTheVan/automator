@@ -12,7 +12,7 @@ DYNAMIC_LIB = $(LIB_NAME).dll
 DLL_IMPLIB = $(LIB_NAME).dll.a
 
 # Исходные файлы
-SOURCES = keyboard.c mouse.c screen.c ocr.c
+SOURCES = keyboard.c mouse.c screen.c ocr.c opencv.c window.c
 OBJECTS = $(SOURCES:.c=.o)
 HEADERS = automator.h
 
