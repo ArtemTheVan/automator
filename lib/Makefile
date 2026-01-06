@@ -20,9 +20,11 @@ HEADERS = automator.h
 all: static dynamic
 
 # Статическая библиотека
+static: CFLAGS += -DBUILDING_AUTOMATOR_DLL
 static: $(STATIC_LIB)
 
 # Динамическая библиотека
+dynamic: CFLAGS += -DBUILDING_AUTOMATOR_DLL
 dynamic: $(DYNAMIC_LIB)
 
 $(STATIC_LIB): $(OBJECTS)
