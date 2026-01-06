@@ -4,27 +4,9 @@
 #include <stdlib.h>
 #include <time.h>
 #include <ctype.h>
-#include <process.h>
 #include "ocr.h"
-#include "screen.h"
-
-/* Внутренние переменные */
-static int ocr_initialized = 0;
-static char tesseract_path[MAX_PATH] = "";
-static char tessdata_path[MAX_PATH] = "";
 
 /* Вспомогательные функции */
-static char *generate_temp_filename(const char *extension)
-{
-    static char filename[MAX_PATH];
-    char temp_path[MAX_PATH];
-
-    GetTempPath(MAX_PATH, temp_path);
-    sprintf(filename, "%socr_temp_%d.%s", temp_path, (int)time(NULL) % 10000, extension);
-
-    return filename;
-}
-
 static int is_file_exists(const char *filename)
 {
     WIN32_FIND_DATA findFileData;
@@ -42,21 +24,21 @@ static char *trim_string(char *str)
     if (!str)
         return NULL;
 
-    // Trim leading spaces
+    /* Trim leading spaces */
     char *start = str;
     while (*start == ' ' || *start == '\n' || *start == '\r' || *start == '\t')
     {
         start++;
     }
 
-    // All spaces?
+    /* All spaces? */
     if (*start == '\0')
     {
         str[0] = '\0';
         return str;
     }
 
-    // Trim trailing spaces
+    /* Trim trailing spaces */
     char *end = start + strlen(start) - 1;
     while (end > start && (*end == ' ' || *end == '\n' || *end == '\r' || *end == '\t'))
     {
@@ -65,7 +47,7 @@ static char *trim_string(char *str)
 
     *(end + 1) = '\0';
 
-    // Move trimmed string to beginning if needed
+    /* Move trimmed string to beginning if needed */
     if (start != str)
     {
         memmove(str, start, strlen(start) + 1);
@@ -77,14 +59,9 @@ static char *trim_string(char *str)
 /* Основные функции управления OCR */
 int ocr_init(const char *custom_tessdata_path)
 {
-    if (ocr_initialized)
-    {
-        return OCR_SUCCESS;
-    }
-
     printf("Initializing OCR system...\n");
 
-    // Проверяем наличие Tesseract в стандартных местах
+    /* Проверяем наличие Tesseract в стандартных местах */
     const char *possible_paths[] = {
         "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
         "C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe",
@@ -92,6 +69,8 @@ int ocr_init(const char *custom_tessdata_path)
         NULL};
 
     int found = 0;
+    char tesseract_path[MAX_PATH] = "";
+
     for (int i = 0; possible_paths[i]; i++)
     {
         if (is_file_exists(possible_paths[i]))
@@ -108,64 +87,17 @@ int ocr_init(const char *custom_tessdata_path)
         return OCR_ERROR_TESSERACT_NOT_FOUND;
     }
 
-    // Устанавливаем путь к tessdata
-    if (custom_tessdata_path)
-    {
-        strcpy(tessdata_path, custom_tessdata_path);
-    }
-    else
-    {
-        // Автоматически определяем путь к tessdata
-        char *last_slash = strrchr(tesseract_path, '\\');
-        if (last_slash)
-        {
-            char base_path[MAX_PATH];
-            strncpy(base_path, tesseract_path, last_slash - tesseract_path);
-            base_path[last_slash - tesseract_path] = '\0';
-            sprintf(tessdata_path, "%s\\tessdata", base_path);
-        }
-    }
-
-    // Проверяем наличие tessdata
-    if (!is_file_exists(tessdata_path))
-    {
-        printf("Warning: tessdata directory not found at %s\n", tessdata_path);
-    }
-
-    ocr_initialized = 1;
     printf("OCR initialized successfully\n");
     printf("  Tesseract: %s\n", tesseract_path);
-    printf("  Tessdata: %s\n", tessdata_path);
 
     return OCR_SUCCESS;
 }
 
-void ocr_cleanup()
+void ocr_cleanup(void)
 {
-    ocr_initialized = 0;
     printf("OCR system cleaned up\n");
 }
 
-int ocr_is_initialized()
-{
-    return ocr_initialized;
-}
-
-/* Функции создания результатов */
-OCRResult ocr_create_empty_result()
-{
-    OCRResult result = {0};
-    return result;
-}
-
-OCRResult ocr_create_error_result(int error_code)
-{
-    OCRResult result = {0};
-    result.error_code = error_code;
-    return result;
-}
-
-/* Вспомогательные функции для работы с результатами */
 void ocr_result_free(OCRResult *result)
 {
     if (result && result->text)
@@ -176,64 +108,125 @@ void ocr_result_free(OCRResult *result)
     }
 }
 
-char *ocr_result_to_string(OCRResult result)
+/* Преобразует UTF-8 в CP1251 */
+static char *convert_utf8_to_cp1251(const char *utf8_str)
 {
-    if (result.text && result.error_code == OCR_SUCCESS)
-    {
-        return strdup(result.text);
-    }
-    return NULL;
-}
+    if (!utf8_str)
+        return NULL;
 
-void ocr_result_print(OCRResult result, const char *label)
-{
-    if (label)
-    {
-        printf("%s: ", label);
-    }
+    size_t len = strlen(utf8_str);
+    char *result = (char *)malloc(len * 2 + 1); /* Максимум в 2 раза больше */
+    if (!result)
+        return NULL;
 
-    if (result.error_code != OCR_SUCCESS)
+    int j = 0;
+    for (int i = 0; utf8_str[i]; i++)
     {
-        printf("OCR error %d", result.error_code);
+        unsigned char c = (unsigned char)utf8_str[i];
 
-        switch (result.error_code)
+        /* Простая конвертация наиболее распространенных символов */
+        if (c <= 0x7F)
         {
-        case OCR_ERROR_INIT_FAILED:
-            printf(" (Initialization failed)");
-            break;
-        case OCR_ERROR_NO_TEXT:
-            printf(" (No text found)");
-            break;
-        case OCR_ERROR_FILE_NOT_FOUND:
-            printf(" (File not found)");
-            break;
-        case OCR_ERROR_TESSERACT_NOT_FOUND:
-            printf(" (Tesseract not found)");
-            break;
+            result[j++] = c;
         }
-        printf("\n");
-        return;
+        else if (c == 0xD0 && utf8_str[i + 1])
+        {
+            unsigned char next = (unsigned char)utf8_str[i + 1];
+            if (next >= 0x90 && next <= 0xBF)
+            { /* А-п */
+                result[j++] = next + 0x40;
+                i++;
+            }
+            else if (next == 0x81)
+            { /* Ё */
+                result[j++] = 0xA8;
+                i++;
+            }
+        }
+        else if (c == 0xD1 && utf8_str[i + 1])
+        {
+            unsigned char next = (unsigned char)utf8_str[i + 1];
+            if (next >= 0x80 && next <= 0x8F)
+            { /* р-я */
+                result[j++] = next + 0x70;
+                i++;
+            }
+            else if (next == 0x91)
+            { /* ё */
+                result[j++] = 0xB8;
+                i++;
+            }
+        }
+        else
+        {
+            /* Оставляем как есть */
+            result[j++] = c;
+        }
     }
+    result[j] = '\0';
 
-    if (result.text && result.text_length > 0)
-    {
-        printf("Text (%d chars, confidence: %.1f%%): '%s'\n",
-               result.text_length, result.confidence * 100, result.text);
-    }
-    else
-    {
-        printf("Empty result\n");
-    }
+    return result;
 }
 
-static int run_tesseract_simple(const char *image_path, const char *output_file, const char *language)
+/* Очищает текст OCR */
+static void clean_ocr_text(char *text)
+{
+    char cleaned[1024] = {0};
+    int j = 0;
+
+    for (int i = 0; text[i] && j < 1023; i++)
+    {
+        unsigned char c = (unsigned char)text[i];
+
+        /* Латинские буквы - в верхний регистр */
+        if (c >= 'a' && c <= 'z')
+        {
+            cleaned[j++] = c - 32; /* В верхний регистр */
+        }
+        else if (c >= 'A' && c <= 'Z')
+        {
+            cleaned[j++] = c;
+        }
+        /* Кириллица в CP1251 (А-Я, а-я, Ёё) */
+        else if ((c >= 0xC0 && c <= 0xFF) || c == 0xA8 || c == 0xB8)
+        {
+            /* Оставляем как есть, но можно преобразовать в верхний регистр */
+            if (c >= 0xE0 && c <= 0xFF)
+            {                            /* а-я */
+                cleaned[j++] = c - 0x20; /* В верхний регистр */
+            }
+            else if (c == 0xB8)
+            {                        /* ё */
+                cleaned[j++] = 0xA8; /* Ё */
+            }
+            else
+            {
+                cleaned[j++] = c;
+            }
+        }
+        /* Цифры */
+        else if (c >= '0' && c <= '9')
+        {
+            cleaned[j++] = c;
+        }
+        /* Пробелы и дефисы */
+        else if (c == ' ' || c == '-')
+        {
+            cleaned[j++] = c;
+        }
+    }
+
+    cleaned[j] = '\0';
+    strcpy(text, cleaned);
+}
+
+static int run_tesseract_simple(const char *image_path, const char *output_file, const char *language, const unsigned int psm)
 {
     char command[4096];
 
-    // Правильный способ: экранирование для Windows
-    // Используем cmd /c с двойными кавычками
-    sprintf(command, "cmd /c \"\"%s\" \"%s\" \"%s\" -l %s --psm 6\"",
-            tesseract_path, image_path, output_file, language);
+    /* Используем путь по умолчанию */
+    sprintf(command, "cmd /c \"\"C:\\Program Files\\Tesseract-OCR\\tesseract.exe\" \"%s\" \"%s\" -l %s --psm %u\"",
+            image_path, output_file, language, psm);
 
     printf("Executing: %s\n", command);
 
@@ -242,86 +235,202 @@ static int run_tesseract_simple(const char *image_path, const char *output_file,
     if (result != 0)
     {
         printf("Tesseract returned error code: %d\n", result);
-
-        // Альтернативный метод: использовать CreateProcess
-        STARTUPINFO si = {0};
-        PROCESS_INFORMATION pi = {0};
-        si.cb = sizeof(si);
-
-        char cmd_line[4096];
-        sprintf(cmd_line, "\"%s\" \"%s\" \"%s\" -l %s --psm 6",
-                tesseract_path, image_path, output_file, language);
-
-        printf("Trying CreateProcess: %s\n", cmd_line);
-
-        if (CreateProcess(NULL, cmd_line, NULL, NULL, FALSE,
-                          CREATE_NO_WINDOW, NULL, NULL, &si, &pi))
-        {
-            WaitForSingleObject(pi.hProcess, INFINITE);
-            GetExitCodeProcess(pi.hProcess, (DWORD *)&result);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-        }
-        else
-        {
-            printf("CreateProcess failed, error: %lu\n", GetLastError());
-        }
     }
 
     return result;
 }
 
-/* Основная функция распознавания через Tesseract */
-static OCRResult run_tesseract_ocr(const char *image_path, const char *language)
+/* Проверяет, содержит ли текст странные символы */
+static int contains_weird_chars(const char *text)
 {
-    OCRResult result = ocr_create_empty_result();
-
-    if (!ocr_initialized)
+    for (int i = 0; text[i]; i++)
     {
-        if (ocr_init(NULL) != OCR_SUCCESS)
+        unsigned char c = (unsigned char)text[i];
+        /* Проверяем на символы, которые выглядят как поврежденная кириллица */
+        if (c >= 0xD0 && c <= 0xDF && text[i + 1])
         {
-            result.error_code = OCR_ERROR_INIT_FAILED;
-            return result;
+            /* Это может быть UTF-8, но если следующий символ тоже странный... */
+            unsigned char next = (unsigned char)text[i + 1];
+            if (next >= 0x80 && next <= 0xBF)
+            {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* Исправляет кодировку текста */
+static void fix_text_encoding(char *text)
+{
+    /* Простая попытка исправить UTF-8 проблемы */
+    char fixed[1024] = {0};
+    int j = 0;
+
+    for (int i = 0; text[i] && j < 1023; i++)
+    {
+        unsigned char c = (unsigned char)text[i];
+
+        /* Пытаемся преобразовать UTF-8 последовательности */
+        if (c >= 0xD0 && c <= 0xDF && text[i + 1])
+        {
+            unsigned char next = (unsigned char)text[i + 1];
+            if (c == 0xD1 && next == 0x81)
+            {                      /* 'Ё' */
+                fixed[j++] = 0xCB; /* В CP1251 */
+                i++;               /* Пропускаем следующий байт */
+            }
+            else if (c == 0xD0 && next >= 0x90 && next <= 0xBF)
+            {                             /* 'А'-'п' */
+                fixed[j++] = next + 0x40; /* Преобразуем в CP1251 */
+                i++;
+            }
+            else if (c == 0xD1 && next >= 0x80 && next <= 0x8F)
+            {                             /* 'р'-'я' */
+                fixed[j++] = next + 0x70; /* Преобразуем в CP1251 */
+                i++;
+            }
+            else
+            {
+                fixed[j++] = c;
+            }
+        }
+        else if (c >= 0x80 && c <= 0xFF)
+        {
+            /* Оставляем как есть - возможно, это уже CP1251 */
+            fixed[j++] = c;
+        }
+        else if (c >= 32 && c <= 126)
+        {
+            /* Печатные ASCII символы */
+            fixed[j++] = c;
+        }
+        /* Игнорируем остальное */
+    }
+
+    fixed[j] = '\0';
+    strcpy(text, fixed);
+}
+
+/* Рассчитывает уверенность распознавания */
+static float calculate_confidence(const char *text)
+{
+    int letter_count = 0;
+    int total_chars = 0;
+
+    for (int i = 0; text[i]; i++)
+    {
+        unsigned char c = (unsigned char)text[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= 0xC0 && c <= 0xFF)) /* Кириллица в CP1251 */
+        {
+            letter_count++;
+        }
+        if (c >= 32) /* Не управляющие символы */
+        {
+            total_chars++;
         }
     }
 
-    // Проверяем существование файла
+    if (total_chars == 0)
+        return 0.0f;
+
+    float ratio = (float)letter_count / total_chars;
+
+    /* Базовая уверенность */
+    float confidence = 0.5f + ratio * 0.5f;
+
+    /* Дополнительные бонусы за ключевые слова */
+    if (strstr(text, "ENG") || strstr(text, "EN") || strstr(text, "US"))
+        confidence += 0.2f;
+    if (strstr(text, "RUS") || strstr(text, "RU") ||
+        strstr(text, "РУС") || strstr(text, "РУ"))
+        confidence += 0.2f;
+
+    return confidence > 1.0f ? 1.0f : confidence;
+}
+
+/* Основная функция распознавания через Tesseract */
+OCRResult ocr_from_file(const char *image_path, const char *language, const unsigned int psm, const unsigned int dpi)
+{
+    OCRResult result = {0};
+
+    /* Проверяем существование файла */
     if (!is_file_exists(image_path))
     {
         result.error_code = OCR_ERROR_FILE_NOT_FOUND;
         return result;
     }
 
-    // Генерируем временный файл для результата
+    /* Генерируем временный файл для результата */
     char output_file[MAX_PATH];
-    GetTempPath(MAX_PATH, output_file);
-    sprintf(output_file, "%socr_result_%d", output_file, GetCurrentProcessId());
+    char temp_output_file[MAX_PATH];
+    GetTempPath(MAX_PATH, temp_output_file);
+    snprintf(temp_output_file, MAX_PATH, "%socr_result_%lu", temp_output_file, GetCurrentProcessId());
+    strcpy(output_file, temp_output_file);
 
-    // Если язык не указан, используем английский по умолчанию
+    /* Если язык не указан, используем английский по умолчанию */
     const char *lang = language ? language : "eng";
 
-    // Запускаем Tesseract
-    int ret = run_tesseract_simple(image_path, output_file, lang);
+    /* Для маленьких изображений используем специальные настройки */
+    unsigned int actual_psm = psm;
+    unsigned int actual_dpi = dpi;
+
+    /* Если PSM не указан, выбираем оптимальный для маленького текста */
+    if (psm == 0)
+    {
+        actual_psm = 7; /* PSM 7: Одна строка текста */
+    }
+
+    /* Если DPI не указан, используем 300 для небольших изображений */
+    if (dpi == 0)
+    {
+        actual_dpi = 300;
+    }
+
+    /* Дополнительные параметры для улучшения распознавания */
+    char command[4096];
+
+    /* УПРОЩЕННАЯ команда без whitelist - он может мешать распознаванию */
+    sprintf(command, "cmd /c \"\"C:\\Program Files\\Tesseract-OCR\\tesseract.exe\" \"%s\" \"%s\" -l %s --psm %u --dpi %u --oem 1\"",
+            image_path, output_file, lang, actual_psm, actual_dpi);
+
+    printf("Executing: %s\n", command);
+
+    int ret = system(command);
 
     if (ret != 0)
     {
-        printf("Tesseract failed with return code: %d\n", ret);
-        result.error_code = OCR_ERROR_INIT_FAILED;
-        return result;
+        printf("Tesseract returned error code: %d\n", ret);
+
+        /* Попробуем без указания DPI */
+        sprintf(command, "cmd /c \"\"C:\\Program Files\\Tesseract-OCR\\tesseract.exe\" \"%s\" \"%s\" -l %s --psm %u\"",
+                image_path, output_file, lang, actual_psm);
+        printf("Trying without DPI: %s\n", command);
+
+        ret = system(command);
+
+        if (ret != 0)
+        {
+            result.error_code = OCR_ERROR_INIT_FAILED;
+            return result;
+        }
     }
 
-    // Читаем результат из файла
+    /* Читаем результат из файла */
     char result_file[MAX_PATH];
-    sprintf(result_file, "%s.txt", output_file);
+    char temp_result_file[MAX_PATH];
+    snprintf(temp_result_file, MAX_PATH, "%s.txt", output_file);
+    strcpy(result_file, temp_result_file);
 
-    FILE *fp = fopen(result_file, "r");
+    FILE *fp = fopen(result_file, "rb"); /* Открываем в бинарном режиме */
     if (!fp)
     {
         result.error_code = OCR_ERROR_FILE_NOT_FOUND;
         return result;
     }
 
-    // Определяем размер файла
+    /* Определяем размер файла */
     fseek(fp, 0, SEEK_END);
     long file_size = ftell(fp);
     fseek(fp, 0, SEEK_SET);
@@ -334,7 +443,7 @@ static OCRResult run_tesseract_ocr(const char *image_path, const char *language)
         return result;
     }
 
-    // Читаем содержимое
+    /* Читаем содержимое в UTF-8 */
     result.text = (char *)malloc(file_size + 1);
     if (!result.text)
     {
@@ -350,20 +459,34 @@ static OCRResult run_tesseract_ocr(const char *image_path, const char *language)
 
     fclose(fp);
 
-    // Удаляем временный файл
+    /* Удаляем временный файл */
     remove(result_file);
 
-    // Очищаем и обрезаем текст
+    /* Очищаем и обрезаем текст */
     if (result.text_length > 0)
     {
         trim_string(result.text);
         result.text_length = (int)strlen(result.text);
+
+        /* Преобразуем текст в Windows-1251 для простоты анализа */
+        char *converted = convert_utf8_to_cp1251(result.text);
+        if (converted)
+        {
+            free(result.text);
+            result.text = converted;
+            result.text_length = (int)strlen(result.text);
+        }
+
+        /* Удаляем все не-буквенные символы и приводим к верхнему регистру */
+        clean_ocr_text(result.text);
     }
 
     if (result.text_length > 0)
     {
-        result.confidence = 0.85f;
+        /* Рассчитываем уверенность на основе длины текста и содержания букв */
+        result.confidence = calculate_confidence(result.text);
         result.error_code = OCR_SUCCESS;
+        printf("OCR recognized: '%s' (confidence: %.2f)\n", result.text, result.confidence);
     }
     else
     {
@@ -371,58 +494,6 @@ static OCRResult run_tesseract_ocr(const char *image_path, const char *language)
         result.text = NULL;
         result.error_code = OCR_ERROR_NO_TEXT;
     }
-
-    return result;
-}
-
-/* Основные OCR функции */
-OCRResult ocr_from_file(const char *image_path, const char *language)
-{
-    return run_tesseract_ocr(image_path, language);
-}
-
-OCRResult ocr_from_bitmap(HBITMAP bitmap, const char *language)
-{
-    if (!bitmap)
-    {
-        return ocr_create_error_result(OCR_ERROR_INVALID_PARAMS);
-    }
-
-    // Сохраняем bitmap во временный файл
-    char *temp_file = generate_temp_filename("bmp");
-    if (!save_bitmap_to_file(bitmap, temp_file))
-    {
-        return ocr_create_error_result(OCR_ERROR_CAPTURE_FAILED);
-    }
-
-    // Распознаем текст
-    OCRResult result = run_tesseract_ocr(temp_file, language);
-
-    // Удаляем временный файл
-    remove(temp_file);
-
-    return result;
-}
-
-OCRResult ocr_from_screen_region(int x, int y, int width, int height, const char *language)
-{
-    if (width <= 0 || height <= 0)
-    {
-        return ocr_create_error_result(OCR_ERROR_INVALID_PARAMS);
-    }
-
-    // Захватываем область в bitmap
-    HBITMAP bitmap = capture_to_bitmap(x, y, width, height);
-    if (!bitmap)
-    {
-        return ocr_create_error_result(OCR_ERROR_CAPTURE_FAILED);
-    }
-
-    // Распознаем текст
-    OCRResult result = ocr_from_bitmap(bitmap, language);
-
-    // Освобождаем ресурсы
-    DeleteObject(bitmap);
 
     return result;
 }

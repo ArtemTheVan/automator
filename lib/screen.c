@@ -73,28 +73,28 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
     HDC hDC;
     DWORD dwSizeofDIB, dwBytesWritten;
 
-    // Получаем информацию о битмапе
+    /* Получаем информацию о битмапе */
     if (!GetObject(hBitmap, sizeof(BITMAP), &bmp))
     {
         printf("Failed to get bitmap info\n");
         return 0;
     }
 
-    printf("Bitmap dimensions: %dx%d, bpp: %d\n", bmp.bmWidth, bmp.bmHeight, bmp.bmBitsPixel);
+    printf("Bitmap dimensions: %ldx%ld, bpp: %d\n", bmp.bmWidth, bmp.bmHeight, bmp.bmBitsPixel);
 
-    // Проверяем размеры
+    /* Проверяем размеры */
     if (bmp.bmWidth <= 0 || bmp.bmHeight <= 0)
     {
-        printf("Invalid bitmap dimensions: %dx%d\n", bmp.bmWidth, bmp.bmHeight);
+        printf("Invalid bitmap dimensions: %ldx%ld\n", bmp.bmWidth, bmp.bmHeight);
         return 0;
     }
 
-    // Заполняем BITMAPINFOHEADER
+    /* Заполняем BITMAPINFOHEADER */
     bi.biSize = sizeof(BITMAPINFOHEADER);
     bi.biWidth = bmp.bmWidth;
-    bi.biHeight = bmp.bmHeight; // Положительное значение для bottom-up DIB
+    bi.biHeight = -bmp.bmHeight; /* Положительное значение для bottom-up DIB */
     bi.biPlanes = 1;
-    bi.biBitCount = 24; // 24-битный формат
+    bi.biBitCount = 24; /* 24-битный формат */
     bi.biCompression = BI_RGB;
     bi.biSizeImage = 0;
     bi.biXPelsPerMeter = 0;
@@ -102,14 +102,14 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
     bi.biClrUsed = 0;
     bi.biClrImportant = 0;
 
-    // Вычисляем размер пиксельных данных
-    // Ширина в байтах должна быть кратна 4
+    /* Вычисляем размер пиксельных данных */
+    /* Ширина в байтах должна быть кратна 4 */
     DWORD lineSize = ((bmp.bmWidth * 24 + 31) / 32) * 4;
     dwBmpSize = lineSize * bmp.bmHeight;
 
     printf("Bitmap size calculation: lineSize=%lu, dwBmpSize=%lu\n", lineSize, dwBmpSize);
 
-    // Выделяем память для пиксельных данных
+    /* Выделяем память для пиксельных данных */
     lpbitmap = (char *)malloc(dwBmpSize);
     if (!lpbitmap)
     {
@@ -117,7 +117,7 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
         return 0;
     }
 
-    // Получаем контекст устройства
+    /* Получаем контекст устройства */
     hDC = GetDC(NULL);
     if (!hDC)
     {
@@ -126,7 +126,7 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
         return 0;
     }
 
-    // Получаем данные битмапа
+    /* Получаем данные битмапа */
     if (!GetDIBits(hDC, hBitmap, 0, bmp.bmHeight, lpbitmap,
                    (BITMAPINFO *)&bi, DIB_RGB_COLORS))
     {
@@ -138,13 +138,13 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
 
     ReleaseDC(NULL, hDC);
 
-    // Заполняем BITMAPFILEHEADER
+    /* Заполняем BITMAPFILEHEADER */
     dwSizeofDIB = dwBmpSize + sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
     bmfHeader.bfOffBits = (DWORD)sizeof(BITMAPFILEHEADER) + (DWORD)sizeof(BITMAPINFOHEADER);
     bmfHeader.bfSize = dwSizeofDIB;
-    bmfHeader.bfType = 0x4D42; // "BM"
+    bmfHeader.bfType = 0x4D42; /* "BM" */
 
-    // Создаем файл
+    /* Создаем файл */
     hFile = CreateFile(filename, GENERIC_WRITE, 0, NULL,
                        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE)
@@ -154,7 +154,7 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
         return 0;
     }
 
-    // Записываем данные в файл
+    /* Записываем данные в файл */
     BOOL writeSuccess = TRUE;
 
     if (!WriteFile(hFile, &bmfHeader, sizeof(BITMAPFILEHEADER), &dwBytesWritten, NULL) ||
@@ -180,18 +180,18 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
         writeSuccess = FALSE;
     }
 
-    // Закрываем файл и освобождаем память
+    /* Закрываем файл и освобождаем память */
     CloseHandle(hFile);
     free(lpbitmap);
 
     if (writeSuccess)
     {
-        printf("Bitmap saved successfully: %s (%dx%d)\n", filename, bmp.bmWidth, bmp.bmHeight);
+        printf("Bitmap saved successfully: %s (%ldx%ld)\n", filename, bmp.bmWidth, bmp.bmHeight);
         return 1;
     }
     else
     {
-        DeleteFile(filename); // Удаляем частично записанный файл
+        DeleteFile(filename); /* Удаляем частично записанный файл */
         return 0;
     }
 }
@@ -207,6 +207,7 @@ int get_screen_height()
     return GetSystemMetrics(SM_CYSCREEN);
 }
 
+/* Старая версия (оставляем для совместимости) */
 ScreenRegion get_system_tray_region()
 {
     ScreenRegion region = {0};
@@ -214,14 +215,41 @@ ScreenRegion get_system_tray_region()
     int screen_width = get_screen_width();
     int screen_height = get_screen_height();
 
-    // Увеличим область для лучшего захвата
-    region.width = 120;                            // Ширина
-    region.height = 50;                            // Высота
-    region.x = screen_width - region.width - 90;   // Правая часть
-    region.y = screen_height - region.height - 10; // Нижняя часть
+    /* Увеличим область для лучшего захвата */
+    region.width = 120;                            /* Ширина */
+    region.height = 50;                            /* Высота */
+    region.x = screen_width - region.width - 90;   /* Правая часть */
+    region.y = screen_height - region.height - 10; /* Нижняя часть */
 
-    printf("System tray region: %dx%d at (%d,%d)\n",
+    printf("System tray region (fixed): %dx%d at (%d,%d)\n",
            region.width, region.height, region.x, region.y);
+
+    return region;
+}
+
+/* В конце screen.c, после get_system_tray_region, добавляем: */
+
+/* Функция автовыбора метода */
+ScreenRegion get_system_tray_region_auto(void)
+{
+    ScreenRegion region;
+
+/* Пытаемся использовать OpenCV, если он доступен */
+#ifdef USE_OPENCV
+    DetectedRegion detected = detect_system_tray_region();
+    region.x = detected.x;
+    region.y = detected.y;
+    region.width = detected.width;
+    region.height = detected.height;
+
+    /* Если OpenCV не нашел, используем старый метод */
+    if (region.width == 0 || region.height == 0)
+    {
+        region = get_system_tray_region();
+    }
+#else
+    region = get_system_tray_region();
+#endif
 
     return region;
 }

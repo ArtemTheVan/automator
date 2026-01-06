@@ -3,7 +3,29 @@
 CC = gcc
 AR = ar
 CFLAGS = -O2 -Wall -Wextra -I. -fPIC
+CFLAGS += -DBUILDING_AUTOMATOR_DLL
 LDFLAGS_DLL = -shared -Wl,--out-implib,libautomator.dll.a
+
+# Используем pkg-config для OpenCV
+PKG_CONFIG = pkg-config
+OPENCV_CFLAGS := $(shell $(PKG_CONFIG) --cflags opencv4 2>/dev/null || echo "")
+OPENCV_LIBS := $(shell $(PKG_CONFIG) --libs opencv4 2>/dev/null || echo "")
+
+# Если pkg-config не сработал, используем стандартные пути MSYS2
+ifeq ($(OPENCV_CFLAGS),)
+    OPENCV_CFLAGS = -I/mingw64/include/opencv4 -DHAVE_OPENCV
+endif
+
+ifeq ($(OPENCV_LIBS),)
+    OPENCV_LIBS = -L/mingw64/lib \
+                  -lopencv_core \
+                  -lopencv_imgproc \
+                  -lopencv_highgui \
+                  -lopencv_imgcodecs
+endif
+
+# Добавляем флаги OpenCV
+CFLAGS += $(OPENCV_CFLAGS)
 
 # Имена файлов
 LIB_NAME = libautomator
@@ -20,18 +42,16 @@ HEADERS = automator.h
 all: static dynamic
 
 # Статическая библиотека
-static: CFLAGS += -DBUILDING_AUTOMATOR_DLL
 static: $(STATIC_LIB)
 
 # Динамическая библиотека
-dynamic: CFLAGS += -DBUILDING_AUTOMATOR_DLL
 dynamic: $(DYNAMIC_LIB)
 
 $(STATIC_LIB): $(OBJECTS)
 	$(AR) rcs $@ $^
 
 $(DYNAMIC_LIB): $(OBJECTS)
-	$(CC) $(LDFLAGS_DLL) -o $@ $(OBJECTS) -lgdi32 -luser32
+	$(CC) $(LDFLAGS_DLL) -o $@ $(OBJECTS) -lgdi32 -luser32 $(OPENCV_LIBS)
 
 # Компиляция исходников
 %.o: %.c $(HEADERS)

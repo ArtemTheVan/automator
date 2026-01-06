@@ -2,34 +2,13 @@
 #define OCR_H_
 
 #include <windows.h>
-#include <stdio.h>
-#include <string.h>
 
-/* Структура для результатов OCR */
-typedef struct
-{
-    char *text;       // Распознанный текст
-    float confidence; // Уровень уверенности
-    int text_length;  // Длина текста
-    int error_code;   // Код ошибки (0 - успех)
-} OCRResult;
-
-/* Инициализация/деинициализация OCR системы */
-int ocr_init(const char *tessdata_path);
-void ocr_cleanup();
-int ocr_is_initialized();
-
-/* Основные функции распознавания текста */
-OCRResult ocr_from_bitmap(HBITMAP bitmap, const char *language);
-OCRResult ocr_from_file(const char *image_path, const char *language);
-OCRResult ocr_from_screen_region(int x, int y, int width, int height, const char *language);
-
-/* Утилиты для работы с результатами OCR */
-void ocr_result_free(OCRResult *result);
-char *ocr_result_to_string(OCRResult result);
-void ocr_result_print(OCRResult result, const char *label);
-OCRResult ocr_create_empty_result();
-OCRResult ocr_create_error_result(int error_code);
+/* Макросы для экспорта функций из DLL */
+#ifdef BUILDING_AUTOMATOR_DLL /* ИЗМЕНЕНО с BUILDING_OCR_DLL */
+#define OCR_API __declspec(dllexport)
+#else
+#define OCR_API __declspec(dllimport)
+#endif
 
 /* Коды ошибок */
 #define OCR_SUCCESS 0
@@ -41,5 +20,20 @@ OCRResult ocr_create_error_result(int error_code);
 #define OCR_ERROR_INVALID_PARAMS -6
 #define OCR_ERROR_TESSERACT_NOT_FOUND -7
 #define OCR_ERROR_IMAGE_EMPTY -8
+
+/* Структура для результатов OCR */
+typedef struct
+{
+    char *text;
+    float confidence;
+    int text_length;
+    int error_code;
+} OCRResult;
+
+/* Функции для работы с OCR */
+OCR_API int ocr_init(const char *tessdata_path);
+OCR_API void ocr_cleanup(void);
+OCR_API OCRResult ocr_from_file(const char *image_path, const char *language, const unsigned int psm, const unsigned int dpi);
+OCR_API void ocr_result_free(OCRResult *result);
 
 #endif
