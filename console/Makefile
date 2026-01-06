@@ -2,12 +2,14 @@
 
 CC = gcc
 CFLAGS = -O2 -Wall -Wextra -I../lib
-LDFLAGS = -L../lib -lautomator -luser32 -lgdi32
+LDFLAGS = -L../lib -lautomator -luser32 -lgdi32 -mconsole -Wl,--subsystem,console
 
 TARGET = automator_console.exe
-SOURCES = main.c
+SOURCES = ocr_utils.c main.c
 OBJECTS = $(SOURCES:.c=.o)
-LIB_DEP = ../lib/libautomator.a
+
+# Подпроекты
+LIB_DEP = ../lib/libautomator.dll
 
 all: $(LIB_DEP) $(TARGET)
 
@@ -19,17 +21,22 @@ $(TARGET): $(OBJECTS) $(LIB_DEP)
 
 $(LIB_DEP):
 	@echo "Сборка библиотеки..."
-	cd ../lib && $(MAKE) static
+	cd ../lib && $(MAKE) dynamic_console
 
 clean:
-	del /Q *.o $(TARGET) 2>nul || true
+	@echo "Очистка проекта..."
+	-@rm -f $(TARGET) 2>/dev/null || true
+	-@rm -f *.o 2>/dev/null || true
+	-@rm -f nul 2>/dev/null || true
+	-@rm -f NUL 2>/dev/null || true
+	@echo "Очистка завершена"
 
 run: $(TARGET)
 	@echo "Запуск консольной версии..."
-	.\$(TARGET)
+	@./$(TARGET)
 
 test: $(TARGET)
 	@echo "Запуск тестов..."
-	.\$(TARGET)
+	@./$(TARGET)
 
 .PHONY: all clean run test
