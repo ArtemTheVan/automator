@@ -4,13 +4,14 @@
 #include <stdlib.h>
 #include <time.h>
 #include <ctype.h>
+#include <process.h>
 #include "ocr.h"
 #include "screen.h"
 
 /* Внутренние переменные */
 static int ocr_initialized = 0;
-static char tesseract_path[MAX_PATH] = "C:\\Program Files\\Tesseract-OCR\\tesseract.exe";
-static char tessdata_path[MAX_PATH] = "C:\\Program Files\\Tesseract-OCR\\tessdata";
+static char tesseract_path[MAX_PATH] = "";
+static char tessdata_path[MAX_PATH] = "";
 
 /* Вспомогательные функции */
 static char *generate_temp_filename(const char *extension)
@@ -19,8 +20,7 @@ static char *generate_temp_filename(const char *extension)
     char temp_path[MAX_PATH];
 
     GetTempPath(MAX_PATH, temp_path);
-    srand((unsigned int)time(NULL));
-    sprintf(filename, "%socr_temp_%d.%s", temp_path, rand() % 10000, extension);
+    sprintf(filename, "%socr_temp_%d.%s", temp_path, (int)time(NULL) % 10000, extension);
 
     return filename;
 }
@@ -119,9 +119,10 @@ int ocr_init(const char *custom_tessdata_path)
         char *last_slash = strrchr(tesseract_path, '\\');
         if (last_slash)
         {
-            *last_slash = '\0';
-            sprintf(tessdata_path, "%s\\tessdata", tesseract_path);
-            *last_slash = '\\';
+            char base_path[MAX_PATH];
+            strncpy(base_path, tesseract_path, last_slash - tesseract_path);
+            base_path[last_slash - tesseract_path] = '\0';
+            sprintf(tessdata_path, "%s\\tessdata", base_path);
         }
     }
 
@@ -225,6 +226,51 @@ void ocr_result_print(OCRResult result, const char *label)
     }
 }
 
+static int run_tesseract_simple(const char *image_path, const char *output_file, const char *language)
+{
+    char command[4096];
+
+    // Правильный способ: экранирование для Windows
+    // Используем cmd /c с двойными кавычками
+    sprintf(command, "cmd /c \"\"%s\" \"%s\" \"%s\" -l %s --psm 6\"",
+            tesseract_path, image_path, output_file, language);
+
+    printf("Executing: %s\n", command);
+
+    int result = system(command);
+
+    if (result != 0)
+    {
+        printf("Tesseract returned error code: %d\n", result);
+
+        // Альтернативный метод: использовать CreateProcess
+        STARTUPINFO si = {0};
+        PROCESS_INFORMATION pi = {0};
+        si.cb = sizeof(si);
+
+        char cmd_line[4096];
+        sprintf(cmd_line, "\"%s\" \"%s\" \"%s\" -l %s --psm 6",
+                tesseract_path, image_path, output_file, language);
+
+        printf("Trying CreateProcess: %s\n", cmd_line);
+
+        if (CreateProcess(NULL, cmd_line, NULL, NULL, FALSE,
+                          CREATE_NO_WINDOW, NULL, NULL, &si, &pi))
+        {
+            WaitForSingleObject(pi.hProcess, INFINITE);
+            GetExitCodeProcess(pi.hProcess, (DWORD *)&result);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+        }
+        else
+        {
+            printf("CreateProcess failed, error: %lu\n", GetLastError());
+        }
+    }
+
+    return result;
+}
+
 /* Основная функция распознавания через Tesseract */
 static OCRResult run_tesseract_ocr(const char *image_path, const char *language)
 {
@@ -248,22 +294,18 @@ static OCRResult run_tesseract_ocr(const char *image_path, const char *language)
 
     // Генерируем временный файл для результата
     char output_file[MAX_PATH];
-    char command[2048];
-
     GetTempPath(MAX_PATH, output_file);
     sprintf(output_file, "%socr_result_%d", output_file, GetCurrentProcessId());
 
     // Если язык не указан, используем английский по умолчанию
     const char *lang = language ? language : "eng";
 
-    // Формируем команду Tesseract с указанием пути к tessdata
-    sprintf(command, "\"%s\" \"%s\" \"%s\" -l %s --psm 6 --tessdata-dir \"%s\"",
-            tesseract_path, image_path, output_file, lang, tessdata_path);
-
     // Запускаем Tesseract
-    int ret = system(command);
+    int ret = run_tesseract_simple(image_path, output_file, lang);
+
     if (ret != 0)
     {
+        printf("Tesseract failed with return code: %d\n", ret);
         result.error_code = OCR_ERROR_INIT_FAILED;
         return result;
     }
@@ -320,7 +362,6 @@ static OCRResult run_tesseract_ocr(const char *image_path, const char *language)
 
     if (result.text_length > 0)
     {
-        // В реальном проекте нужно парсить уверенность из вывода Tesseract
         result.confidence = 0.85f;
         result.error_code = OCR_SUCCESS;
     }

@@ -64,53 +64,136 @@ HBITMAP capture_to_bitmap(int x, int y, int width, int height)
 
 int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
 {
+    BITMAP bmp;
     BITMAPFILEHEADER bmfHeader;
     BITMAPINFOHEADER bi;
     DWORD dwBmpSize;
+    HANDLE hFile;
+    char *lpbitmap = NULL;
+    HDC hDC;
+    DWORD dwSizeofDIB, dwBytesWritten;
 
-    HDC hDC = CreateCompatibleDC(NULL);
-    GetDIBits(hDC, hBitmap, 0, 0, NULL, (BITMAPINFO *)&bi, DIB_RGB_COLORS);
+    // Получаем информацию о битмапе
+    if (!GetObject(hBitmap, sizeof(BITMAP), &bmp))
+    {
+        printf("Failed to get bitmap info\n");
+        return 0;
+    }
 
+    printf("Bitmap dimensions: %dx%d, bpp: %d\n", bmp.bmWidth, bmp.bmHeight, bmp.bmBitsPixel);
+
+    // Проверяем размеры
+    if (bmp.bmWidth <= 0 || bmp.bmHeight <= 0)
+    {
+        printf("Invalid bitmap dimensions: %dx%d\n", bmp.bmWidth, bmp.bmHeight);
+        return 0;
+    }
+
+    // Заполняем BITMAPINFOHEADER
     bi.biSize = sizeof(BITMAPINFOHEADER);
-    bi.biWidth = bi.biWidth;
-    bi.biHeight = -abs(bi.biHeight);
+    bi.biWidth = bmp.bmWidth;
+    bi.biHeight = bmp.bmHeight; // Положительное значение для bottom-up DIB
     bi.biPlanes = 1;
-    bi.biBitCount = 24;
+    bi.biBitCount = 24; // 24-битный формат
     bi.biCompression = BI_RGB;
+    bi.biSizeImage = 0;
+    bi.biXPelsPerMeter = 0;
+    bi.biYPelsPerMeter = 0;
+    bi.biClrUsed = 0;
+    bi.biClrImportant = 0;
 
-    dwBmpSize = ((bi.biWidth * bi.biBitCount + 31) / 32) * 4 * abs(bi.biHeight);
-    HANDLE hDIB = GlobalAlloc(GHND, dwBmpSize);
+    // Вычисляем размер пиксельных данных
+    // Ширина в байтах должна быть кратна 4
+    DWORD lineSize = ((bmp.bmWidth * 24 + 31) / 32) * 4;
+    dwBmpSize = lineSize * bmp.bmHeight;
 
-    if (!hDIB)
+    printf("Bitmap size calculation: lineSize=%lu, dwBmpSize=%lu\n", lineSize, dwBmpSize);
+
+    // Выделяем память для пиксельных данных
+    lpbitmap = (char *)malloc(dwBmpSize);
+    if (!lpbitmap)
     {
-        DeleteDC(hDC);
+        printf("Failed to allocate memory for bitmap data\n");
         return 0;
     }
 
-    char *lpbitmap = (char *)GlobalLock(hDIB);
-    GetDIBits(hDC, hBitmap, 0, abs(bi.biHeight), lpbitmap, (BITMAPINFO *)&bi, DIB_RGB_COLORS);
+    // Получаем контекст устройства
+    hDC = GetDC(NULL);
+    if (!hDC)
+    {
+        printf("Failed to get device context\n");
+        free(lpbitmap);
+        return 0;
+    }
 
-    DWORD dwSizeofDIB = dwBmpSize + sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
-    bmfHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+    // Получаем данные битмапа
+    if (!GetDIBits(hDC, hBitmap, 0, bmp.bmHeight, lpbitmap,
+                   (BITMAPINFO *)&bi, DIB_RGB_COLORS))
+    {
+        printf("GetDIBits failed, error: %lu\n", GetLastError());
+        free(lpbitmap);
+        ReleaseDC(NULL, hDC);
+        return 0;
+    }
+
+    ReleaseDC(NULL, hDC);
+
+    // Заполняем BITMAPFILEHEADER
+    dwSizeofDIB = dwBmpSize + sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+    bmfHeader.bfOffBits = (DWORD)sizeof(BITMAPFILEHEADER) + (DWORD)sizeof(BITMAPINFOHEADER);
     bmfHeader.bfSize = dwSizeofDIB;
-    bmfHeader.bfType = 0x4D42;
+    bmfHeader.bfType = 0x4D42; // "BM"
 
-    FILE *fp = fopen(filename, "wb");
-    if (!fp)
+    // Создаем файл
+    hFile = CreateFile(filename, GENERIC_WRITE, 0, NULL,
+                       CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE)
     {
-        GlobalFree(hDIB);
-        DeleteDC(hDC);
+        printf("Failed to create file %s, error: %lu\n", filename, GetLastError());
+        free(lpbitmap);
         return 0;
     }
 
-    fwrite(&bmfHeader, sizeof(BITMAPFILEHEADER), 1, fp);
-    fwrite(&bi, sizeof(BITMAPINFOHEADER), 1, fp);
-    fwrite(lpbitmap, 1, dwBmpSize, fp);
+    // Записываем данные в файл
+    BOOL writeSuccess = TRUE;
 
-    fclose(fp);
-    GlobalFree(hDIB);
-    DeleteDC(hDC);
-    return 1;
+    if (!WriteFile(hFile, &bmfHeader, sizeof(BITMAPFILEHEADER), &dwBytesWritten, NULL) ||
+        dwBytesWritten != sizeof(BITMAPFILEHEADER))
+    {
+        printf("Failed to write bitmap file header\n");
+        writeSuccess = FALSE;
+    }
+
+    if (writeSuccess &&
+        (!WriteFile(hFile, &bi, sizeof(BITMAPINFOHEADER), &dwBytesWritten, NULL) ||
+         dwBytesWritten != sizeof(BITMAPINFOHEADER)))
+    {
+        printf("Failed to write bitmap info header\n");
+        writeSuccess = FALSE;
+    }
+
+    if (writeSuccess &&
+        (!WriteFile(hFile, lpbitmap, dwBmpSize, &dwBytesWritten, NULL) ||
+         dwBytesWritten != dwBmpSize))
+    {
+        printf("Failed to write bitmap data\n");
+        writeSuccess = FALSE;
+    }
+
+    // Закрываем файл и освобождаем память
+    CloseHandle(hFile);
+    free(lpbitmap);
+
+    if (writeSuccess)
+    {
+        printf("Bitmap saved successfully: %s (%dx%d)\n", filename, bmp.bmWidth, bmp.bmHeight);
+        return 1;
+    }
+    else
+    {
+        DeleteFile(filename); // Удаляем частично записанный файл
+        return 0;
+    }
 }
 
 /* Утилиты для работы с экраном */
@@ -128,10 +211,17 @@ ScreenRegion get_system_tray_region()
 {
     ScreenRegion region = {0};
 
-    region.width = 200;
-    region.height = 100;
-    region.x = get_screen_width() - region.width - 10;
-    region.y = get_screen_height() - region.height - 10;
+    int screen_width = get_screen_width();
+    int screen_height = get_screen_height();
+
+    // Увеличим область для лучшего захвата
+    region.width = 120;                            // Ширина
+    region.height = 50;                            // Высота
+    region.x = screen_width - region.width - 90;   // Правая часть
+    region.y = screen_height - region.height - 10; // Нижняя часть
+
+    printf("System tray region: %dx%d at (%d,%d)\n",
+           region.width, region.height, region.x, region.y);
 
     return region;
 }
