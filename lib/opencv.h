@@ -20,10 +20,20 @@ typedef struct
     float confidence;
 } DetectedRegion;
 
-/* Функции для работы с OpenCV */
-OPENCV_API int opencv_init(void);
-OPENCV_API void opencv_cleanup(void);
-OPENCV_API DetectedRegion detect_system_tray_region_opencv(void);
-OPENCV_API DetectedRegion find_keyboard_layout_in_region(ScreenRegion region);
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+    /* Функции для работы с OpenCV */
+    OPENCV_API int opencv_init(void);
+    OPENCV_API void opencv_cleanup(void);
+    OPENCV_API DetectedRegion detect_system_tray_region_opencv(void);
+    OPENCV_API DetectedRegion find_keyboard_layout_in_region(ScreenRegion region);
+    OPENCV_API DetectedRegion *find_text_regions_in_tray(ScreenRegion region, int *region_count);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
