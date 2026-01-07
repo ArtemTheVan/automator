@@ -20,22 +20,21 @@ ifneq ($(OPENCV_CFLAGS),)
     OPENCV_CFLAGS += -DHAVE_OPENCV
     HAVE_OPENCV = 1
 else
-    # Проверяем стандартные пути MSYS2
+    # Пробуем прямой путь для MSYS2
     ifeq ($(wildcard /mingw64/include/opencv4/opencv2/opencv.hpp),)
-        ifeq ($(wildcard /usr/include/opencv4/opencv2/opencv.hpp),)
-            $(warning OpenCV not found. Text detection will be limited.)
-            HAVE_OPENCV = 0
-        else
-            # OpenCV 4.x в /usr/include
-            OPENCV_CFLAGS = -I/usr/include/opencv4 -DHAVE_OPENCV
-            OPENCV_LIBS = -lopencv_core -lopencv_imgproc -lopencv_highgui -lopencv_imgcodecs -lopencv_dnn -lopencv_text
-            HAVE_OPENCV = 1
-        endif
+        $(warning OpenCV not found via pkg-config. Using simple text detection.)
+        HAVE_OPENCV = 0
+        OPENCV_CFLAGS = -DNO_OPENCV
+        OPENCV_LIBS = 
     else
-        # OpenCV 4.x в /mingw64/include
-        OPENCV_CFLAGS = -I/mingw64/include/opencv4 -DHAVE_OPENCV
-        OPENCV_LIBS = -lopencv_core -lopencv_imgproc -lopencv_highgui -lopencv_imgcodecs -lopencv_dnn -lopencv_text
+        # OpenCV найден в стандартном месте MSYS2
         HAVE_OPENCV = 1
+        OPENCV_CFLAGS = -I/mingw64/include/opencv4 -DHAVE_OPENCV
+        OPENCV_LIBS = -L/mingw64/lib \
+                      -lopencv_core \
+                      -lopencv_imgproc \
+                      -lopencv_highgui \
+                      -lopencv_imgcodecs
     endif
 endif
 
