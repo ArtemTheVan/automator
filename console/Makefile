@@ -2,7 +2,7 @@
 
 CC = gcc
 CFLAGS = -O2 -Wall -Wextra -I../lib
-LDFLAGS = -L../lib -lautomator -luser32 -lgdi32 -mconsole -Wl,--subsystem,console
+LDFLAGS = -L../lib -lautomator -luser32 -lgdi32 -lole32 -loleaut32 -mconsole -Wl,--subsystem,console
 
 TARGET = automator_console.exe
 SOURCES = ocr_utils.c main.c
@@ -21,14 +21,12 @@ $(TARGET): $(OBJECTS) $(LIB_DEP)
 
 $(LIB_DEP):
 	@echo "Сборка библиотеки..."
-	cd ../lib && $(MAKE) dynamic_console
+	cd ../lib && $(MAKE) dynamic
 
 clean:
 	@echo "Очистка проекта..."
 	-@rm -f $(TARGET) 2>/dev/null || true
 	-@rm -f *.o 2>/dev/null || true
-	-@rm -f nul 2>/dev/null || true
-	-@rm -f NUL 2>/dev/null || true
 	@echo "Очистка завершена"
 
 run: $(TARGET)
