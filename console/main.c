@@ -138,619 +138,245 @@ char *clean_ocr_text_for_display(const char *text)
     return cleaned;
 }
 
-/* Основная функция: разделяет область на 8 регионов и распознает текст */
-void analyze_8grid_regions(ScreenRegion tray_region)
+/* Основная функция: распознавание текста в системном трее с помощью OpenCV */
+void recognize_all_text_in_tray(void)
 {
-    printf("\n=== 8-REGION GRID ANALYSIS (4x2) ===\n");
-    printf("Full tray region: %dx%d at (%d,%d)\n",
-           tray_region.width, tray_region.height, tray_region.x, tray_region.y);
-
-    if (ocr_init(NULL) != OCR_SUCCESS)
-    {
-        printf("OCR initialization failed\n");
-        return;
-    }
-
-    /* Разделяем на 4 столбца и 2 строки */
-    int grid_cols = 4;
-    int grid_rows = 2;
-    int cell_width = tray_region.width / grid_cols;
-    int cell_height = tray_region.height / grid_rows;
-
-    printf("Cell size: %dx%d\n", cell_width, cell_height);
-
-    /* Массивы для хранения распознанного текста */
-    char *row1_texts[4] = {NULL, NULL, NULL, NULL};
-    char *row2_texts[4] = {NULL, NULL, NULL, NULL};
-
-    /* Распознаем текст в каждом регионе */
-    for (int row = 0; row < grid_rows; row++)
-    {
-        for (int col = 0; col < grid_cols; col++)
-        {
-            /* Вычисляем координаты региона */
-            ScreenRegion cell;
-            cell.x = tray_region.x + col * cell_width;
-            cell.y = tray_region.y + row * cell_height;
-            cell.width = cell_width;
-            cell.height = cell_height;
-
-            /* Небольшая коррекция для избежания перекрытия */
-            if (col < grid_cols - 1)
-                cell.width -= 1;
-            if (row < grid_rows - 1)
-                cell.height -= 1;
-
-            printf("\n--- Region [%d,%d]: %dx%d at (%d,%d) ---\n",
-                   row, col, cell.width, cell.height, cell.x, cell.y);
-
-            /* Сохраняем изображение региона для отладки */
-            char debug_name[50];
-            sprintf(debug_name, "region_%d_%d", row, col);
-            save_image_for_debug(cell, debug_name);
-
-            /* Пробуем несколько стратегий OCR для лучшего результата */
-            char *best_text = NULL;
-            float best_confidence = 0;
-
-            for (int strategy = 0; strategy < 3; strategy++)
-            {
-                const char *lang = (strategy == 0) ? OCR_LANG_ENGLISH : (strategy == 1) ? OCR_LANG_RUSSIAN
-                                                                                        : OCR_LANG_ENGLISH_RUSSIAN;
-                int psm = (strategy == 0) ? 8 : (strategy == 1) ? 8
-                                                                : 7;
-
-                OCRResult result = ocr_from_region(cell, lang, psm, 300);
-
-                if (result.error_code == OCR_SUCCESS && result.text && strlen(result.text) > 0)
-                {
-                    /* Очищаем текст для отображения */
-                    char *cleaned_text = clean_ocr_text_for_display(result.text);
-
-                    if (strlen(cleaned_text) > 0 && result.confidence > best_confidence)
-                    {
-                        if (best_text)
-                            free(best_text);
-                        best_text = cleaned_text;
-                        best_confidence = result.confidence;
-
-                        printf("  Strategy %d: '%s' (confidence: %.2f)\n",
-                               strategy + 1, cleaned_text, result.confidence);
-                    }
-                    else
-                    {
-                        free(cleaned_text);
-                    }
-                }
-
-                ocr_result_free(&result);
-            }
-
-            /* Сохраняем лучший текст */
-            if (best_text && strlen(best_text) > 0)
-            {
-                if (row == 0)
-                    row1_texts[col] = best_text;
-                else
-                    row2_texts[col] = best_text;
-            }
-            else
-            {
-                char *dash = (char *)malloc(2);
-                dash[0] = '-';
-                dash[1] = '\0';
-                if (row == 0)
-                    row1_texts[col] = dash;
-                else
-                    row2_texts[col] = dash;
-            }
-        }
-    }
-
-    /* Формируем и выводим 2 текстовые строки */
-    printf("\n=== RECOGNITION RESULTS ===\n");
-
-    /* Первая строка (верхний ряд) */
-    printf("\nROW 1 (top): ");
-    for (int col = 0; col < grid_cols; col++)
-    {
-        if (row1_texts[col])
-        {
-            printf("[%d]='%s' ", col + 1, row1_texts[col]);
-        }
-        else
-        {
-            printf("[%d]='-' ", col + 1);
-        }
-    }
-
-    /* Вторая строка (нижний ряд) */
-    printf("\nROW 2 (bottom): ");
-    for (int col = 0; col < grid_cols; col++)
-    {
-        if (row2_texts[col])
-        {
-            printf("[%d]='%s' ", col + 1, row2_texts[col]);
-        }
-        else
-        {
-            printf("[%d]='-' ", col + 1);
-        }
-    }
-
-    /* Определяем раскладку клавиатуры на основе распознанного текста */
-    printf("\n\n=== LAYOUT DETECTION ===\n");
-
-    int eng_score = 0;
-    int rus_score = 0;
-
-    /* Анализируем все распознанные тексты */
-    for (int col = 0; col < grid_cols; col++)
-    {
-        if (row1_texts[col])
-        {
-            char *text = row1_texts[col];
-            if (strstr(text, "ENG") || strstr(text, "EN") || strstr(text, "US"))
-                eng_score++;
-            else if (strstr(text, "RUS") || strstr(text, "RU") ||
-                     strstr(text, "РУС") || strstr(text, "РУ"))
-                rus_score++;
-        }
-
-        if (row2_texts[col])
-        {
-            char *text = row2_texts[col];
-            if (strstr(text, "ENG") || strstr(text, "EN") || strstr(text, "US"))
-                eng_score++;
-            else if (strstr(text, "RUS") || strstr(text, "RU") ||
-                     strstr(text, "РУС") || strstr(text, "РУ"))
-                rus_score++;
-        }
-    }
-
-    printf("ENG indicators found: %d\n", eng_score);
-    printf("RUS indicators found: %d\n", rus_score);
-
-    if (eng_score > rus_score)
-    {
-        printf("DETECTED LAYOUT: ENG (English)\n");
-    }
-    else if (rus_score > eng_score)
-    {
-        printf("DETECTED LAYOUT: RUS (Russian)\n");
-    }
-    else if (eng_score == rus_score && eng_score > 0)
-    {
-        printf("AMBIGUOUS: Both ENG and RUS indicators found\n");
-    }
-    else
-    {
-        printf("NO LAYOUT INDICATORS FOUND\n");
-    }
-
-    /* Освобождаем память */
-    for (int col = 0; col < grid_cols; col++)
-    {
-        if (row1_texts[col])
-            free(row1_texts[col]);
-        if (row2_texts[col])
-            free(row2_texts[col]);
-    }
-
-    ocr_cleanup();
-    printf("\n=== 8-REGION ANALYSIS COMPLETE ===\n");
-}
-
-/* Улучшенная версия detect_layout_ocr_opencv с анализом 8 регионов */
-int detect_layout_ocr_opencv_8grid(void)
-{
-    printf("\n=== OCR with OpenCV - 8 Region Analysis ===\n");
+    printf("\n=== RECOGNIZING ALL TEXT IN SYSTEM TRAY ===\n");
 
     /* Инициализируем OpenCV */
     printf("Initializing OpenCV...\n");
     if (!opencv_init())
     {
         printf("OpenCV initialization failed\n");
-        return -1;
+        return;
     }
 
     /* Получаем регион системного трея через OpenCV */
-    printf("Detecting system tray region...\n");
-    DetectedRegion tray_region = detect_system_tray_region_opencv();
+    DetectedRegion tray_detected = detect_system_tray_region_opencv();
 
-    if (tray_region.width == 0 || tray_region.height == 0)
+    if (tray_detected.width == 0 || tray_detected.height == 0)
     {
-        printf("WARNING: OpenCV failed to detect system tray\n");
-        printf("Using fixed region...\n");
-        opencv_cleanup();
-
-        /* Используем фиксированную область */
+        printf("Failed to detect system tray. Using fixed region.\n");
         ScreenRegion fixed_region = get_system_tray_region();
-
-        /* Анализируем 8 регионов и определяем раскладку */
-        analyze_8grid_regions(fixed_region);
-        return -1; /* Раскладка уже выведена в analyze_8grid_regions */
+        tray_detected.x = fixed_region.x;
+        tray_detected.y = fixed_region.y;
+        tray_detected.width = fixed_region.width;
+        tray_detected.height = fixed_region.height;
+        tray_detected.confidence = 0.5f;
     }
 
-    printf("SUCCESS: OpenCV detected tray region: %dx%d at (%d,%d), confidence: %.2f\n",
-           tray_region.width, tray_region.height, tray_region.x, tray_region.y,
-           tray_region.confidence);
+    ScreenRegion tray_region = {
+        tray_detected.x,
+        tray_detected.y,
+        tray_detected.width,
+        tray_detected.height};
 
-    /* Конвертируем в ScreenRegion */
-    ScreenRegion screen_region;
-    screen_region.x = tray_region.x;
-    screen_region.y = tray_region.y;
-    screen_region.width = tray_region.width;
-    screen_region.height = tray_region.height;
+    printf("System tray region: %dx%d at (%d,%d), confidence: %.2f\n",
+           tray_region.width, tray_region.height,
+           tray_region.x, tray_region.y, tray_detected.confidence);
 
-    /* Сохраняем полный скриншот трея для отладки */
-    save_image_for_debug(screen_region, "full_tray_opencv");
+    /* Сохраняем скриншот для отладки */
+    save_image_for_debug(tray_region, "full_tray");
 
-    /* Анализируем 8 регионов и определяем раскладку */
-    analyze_8grid_regions(screen_region);
+    /* Ищем текстовые регионы в трее с помощью OpenCV */
+    int region_count = 0;
+    DetectedRegion *text_regions = find_text_regions_in_tray(tray_region, &region_count);
 
-    opencv_cleanup();
-    return -1; /* Раскладка уже выведена в analyze_8grid_regions */
-}
-
-/* Функция для тестирования OpenCV */
-void test_opencv_detection(void)
-{
-    printf("\n=== Testing OpenCV System Tray Detection ===\n");
-
-    if (!opencv_init())
+    if (region_count == 0 || !text_regions)
     {
-        printf("OpenCV initialization failed\n");
+        printf("No text regions found. Using whole tray area.\n");
+        text_regions = (DetectedRegion *)malloc(sizeof(DetectedRegion));
+        text_regions[0] = tray_detected;
+        region_count = 1;
+    }
+
+    /* Инициализируем OCR */
+    if (ocr_init(NULL) != OCR_SUCCESS)
+    {
+        printf("OCR initialization failed\n");
+        free(text_regions);
+        opencv_cleanup();
         return;
     }
 
-    /* Получаем регион системного трея через OpenCV */
-    DetectedRegion region = detect_system_tray_region_opencv();
+    printf("\n=== OCR RESULTS ===\n");
 
-    printf("OpenCV detection result: %dx%d at (%d,%d), confidence: %.2f\n",
-           region.width, region.height, region.x, region.y, region.confidence);
-
-    /* Захватываем и сохраняем изображение для проверки */
-    if (region.width > 0 && region.height > 0)
+    /* Распознаем текст в каждом текстовом регионе */
+    for (int i = 0; i < region_count; i++)
     {
-        char filename[256];
-        sprintf(filename, "test_opencv_%lu.bmp", (unsigned long)GetCurrentProcessId());
+        DetectedRegion region = text_regions[i];
 
-        capture_screen_region(region.x, region.y, region.width, region.height, filename);
-        printf("Test image saved: %s\n", filename);
-    }
+        printf("\n--- Text Region %d: %dx%d at (%d,%d), confidence: %.2f ---\n",
+               i + 1, region.width, region.height, region.x, region.y, region.confidence);
 
-    opencv_cleanup();
-}
+        /* Сохраняем регион для отладки */
+        char debug_name[50];
+        sprintf(debug_name, "text_region_%d", i);
+        save_image_for_debug((ScreenRegion){region.x, region.y, region.width, region.height}, debug_name);
 
-/* Функция для тестирования разных областей захвата */
-void test_different_regions(void)
-{
-    printf("\n=== TESTING DIFFERENT CAPTURE REGIONS ===\n");
+        /* Пробуем разные языки OCR */
+        char *best_text = NULL;
+        float best_confidence = 0;
 
-    /* Получаем различные регионы */
-    ScreenRegion fixed_region = get_system_tray_region();
-    printf("1. Fixed region: %dx%d at (%d,%d)\n",
-           fixed_region.width, fixed_region.height,
-           fixed_region.x, fixed_region.y);
-
-    if (!opencv_init())
-    {
-        printf("OpenCV initialization failed\n");
-        return;
-    }
-
-    DetectedRegion opencv_tray = detect_system_tray_region_opencv();
-    printf("2. OpenCV tray region: %dx%d at (%d,%d)\n",
-           opencv_tray.width, opencv_tray.height,
-           opencv_tray.x, opencv_tray.y);
-
-    /* Тестируем несколько областей */
-    ScreenRegion test_regions[] = {
-        /* Область 1: Фиксированная область */
-        {fixed_region.x, fixed_region.y, fixed_region.width, fixed_region.height},
-
-        /* Область 2: Смещенная область */
-        {1640, 1010, 120, 50},
-
-        /* Область 3: Правая часть OpenCV трея */
-        {opencv_tray.x + opencv_tray.width * 0.7,
-         opencv_tray.y + opencv_tray.height * 0.3,
-         100, 40},
-
-        /* Область 4: Левая часть OpenCV трея */
-        {opencv_tray.x + 20,
-         opencv_tray.y + opencv_tray.height * 0.3,
-         100, 40},
-    };
-
-    const char *region_names[] = {
-        "Fixed region",
-        "Current region (1640,1010)",
-        "Right side of OpenCV tray",
-        "Left side of OpenCV tray"};
-
-    for (int i = 0; i < 4; i++)
-    {
-        printf("\n--- Testing region %d: %s ---\n", i + 1, region_names[i]);
-        printf("Region: %dx%d at (%d,%d)\n",
-               test_regions[i].width, test_regions[i].height,
-               test_regions[i].x, test_regions[i].y);
-
-        /* Сохраняем изображение */
-        char filename[256];
-        sprintf(filename, "test_region_%d_%lu.bmp", i + 1, (unsigned long)GetCurrentProcessId());
-        capture_screen_region(test_regions[i].x, test_regions[i].y,
-                              test_regions[i].width, test_regions[i].height,
-                              filename);
-        printf("Saved: %s\n", filename);
-
-        /* Анализируем 8 регионов (для больших областей) */
-        if (test_regions[i].width >= 100 && test_regions[i].height >= 50)
+        for (int strategy = 0; strategy < 3; strategy++)
         {
-            analyze_8grid_regions(test_regions[i]);
+            const char *lang = (strategy == 0) ? OCR_LANG_ENGLISH : (strategy == 1) ? OCR_LANG_RUSSIAN
+                                                                                    : OCR_LANG_ENGLISH_RUSSIAN;
+
+            OCRResult result = ocr_from_region(
+                (ScreenRegion){region.x, region.y, region.width, region.height},
+                lang, 7, 300);
+
+            if (result.error_code == OCR_SUCCESS && result.text && strlen(result.text) > 0)
+            {
+                char *cleaned_text = clean_ocr_text_for_display(result.text);
+
+                /* Проверяем, что текст имеет смысл */
+                int has_meaningful_chars = 0;
+                for (int j = 0; cleaned_text[j]; j++)
+                {
+                    unsigned char c = cleaned_text[j];
+                    if ((c >= 'A' && c <= 'Z') ||
+                        (c >= 'a' && c <= 'z') ||
+                        (c >= '0' && c <= '9') ||
+                        (c >= 0xC0 && c <= 0xFF)) /* Кириллица */
+                    {
+                        has_meaningful_chars = 1;
+                        break;
+                    }
+                }
+
+                if (has_meaningful_chars && result.confidence > best_confidence)
+                {
+                    if (best_text)
+                        free(best_text);
+                    best_text = cleaned_text;
+                    best_confidence = result.confidence;
+
+                    printf("  Strategy %d: '%s' (confidence: %.2f)\n",
+                           strategy + 1, cleaned_text, result.confidence);
+                }
+                else
+                {
+                    free(cleaned_text);
+                }
+            }
+
+            ocr_result_free(&result);
         }
-    }
 
-    opencv_cleanup();
-    printf("\n=== REGION TEST COMPLETE ===\n");
-}
-
-/* Основная функция определения раскладки */
-int detect_keyboard_layout(int method)
-{
-    printf("=== Keyboard Layout Detection ===\n\n");
-
-    int layout = -1;
-
-    switch (method)
-    {
-    case 0: /* Windows API */
-        printf("1. Windows API method:\n");
-        layout = detect_layout_windows_api();
-        break;
-
-    case 1: /* OCR с OpenCV (анализ 8 регионов) */
-        printf("1. OCR with OpenCV (8-region analysis):\n");
-        detect_layout_ocr_opencv_8grid();
-        layout = -1; /* Раскладка уже выведена внутри функции */
-        break;
-
-    case 2: /* Автоматический выбор */
-    default:
-        /* Сначала пробуем Windows API */
-        printf("1. Trying Windows API method:\n");
-        layout = detect_layout_windows_api();
-
-        /* Если не сработало, используем анализ 8 регионов с OpenCV */
-        if (layout < 0)
+        /* Выводим лучший результат */
+        if (best_text && strlen(best_text) > 0)
         {
-            printf("\n2. Windows API failed, trying 8-region OCR with OpenCV:\n");
-            detect_layout_ocr_opencv_8grid();
-            layout = -1;
-        }
-        break;
-    }
-
-    /* Вывод результата (если еще не выведен в analyze_8grid_regions) */
-    if (layout >= 0)
-    {
-        if (layout == 0)
-        {
-            printf("   Result: ENG (English)\n\n");
-        }
-        else if (layout == 1)
-        {
-            printf("   Result: RUS (Russian)\n\n");
+            printf("  Result: '%s'\n", best_text);
+            free(best_text);
         }
         else
         {
-            printf("   Result: UNKNOWN\n\n");
+            printf("  Result: No text recognized\n");
         }
     }
 
-    return layout;
+    free(text_regions);
+    ocr_cleanup();
+    opencv_cleanup();
+    printf("\n=== TEXT RECOGNITION COMPLETE ===\n");
 }
 
-void run_comprehensive_test(void)
-{
-    printf("\n=== COMPREHENSIVE TEST MODE ===\n");
-
-    /* 1. Тест Windows API */
-    printf("\n1. Testing Windows API method:\n");
-    int api_result = detect_layout_windows_api();
-    printf("Windows API result: %s\n",
-           api_result == 0 ? "ENG" : api_result == 1 ? "RUS"
-                                                     : "FAILED");
-
-    /* 2. Тест OpenCV детекции трея */
-    printf("\n2. Testing OpenCV tray detection:\n");
-    if (!opencv_init())
-    {
-        printf("OpenCV initialization failed\n");
-    }
-    else
-    {
-        DetectedRegion tray = detect_system_tray_region_opencv();
-        printf("Tray detection: %dx%d at (%d,%d), confidence: %.2f\n",
-               tray.width, tray.height, tray.x, tray.y, tray.confidence);
-
-        /* Сохраняем скриншот обнаруженного трея */
-        if (tray.width > 0 && tray.height > 0)
-        {
-            char filename[256];
-            sprintf(filename, "test_tray_detection_%lu.bmp", (unsigned long)GetCurrentProcessId());
-            capture_screen_region(tray.x, tray.y, tray.width, tray.height, filename);
-            printf("Saved tray screenshot: %s\n", filename);
-        }
-
-        opencv_cleanup();
-    }
-
-    /* 3. Тест анализа 8 регионов на фиксированной области */
-    printf("\n3. Testing 8-region analysis on fixed region:\n");
-    ScreenRegion fixed = get_system_tray_region();
-    printf("Fixed region: %dx%d at (%d,%d)\n",
-           fixed.width, fixed.height, fixed.x, fixed.y);
-
-    analyze_8grid_regions(fixed);
-
-    printf("\n=== COMPREHENSIVE TEST COMPLETE ===\n");
-}
-
-/* Функция для быстрой проверки текущей раскладки */
-void quick_check(void)
-{
-    printf("\n=== QUICK LAYOUT CHECK ===\n");
-
-    /* Пробуем Windows API (самый быстрый метод) */
-    int layout = detect_layout_windows_api();
-
-    if (layout >= 0)
-    {
-        printf("Current layout: %s\n", layout == 0 ? "ENG" : "RUS");
-    }
-    else
-    {
-        /* Если Windows API не сработал, пробуем фиксированную область */
-        printf("Windows API failed, trying 8-region analysis...\n");
-        ScreenRegion fixed = get_system_tray_region();
-        analyze_8grid_regions(fixed);
-    }
-}
-
-/* Main function */
+/* Основная функция */
 int main(int argc, char *argv[])
 {
     printf("=========================================\n");
-    printf("   Keyboard Layout Detector v4.0\n");
-    printf("   (8-region grid analysis)\n");
+    printf("   System Tray Text Recognizer v2.0\n");
+    printf("   (OpenCV Text Detection + OCR)\n");
     printf("=========================================\n\n");
 
-    int detection_method = 2; /* Автоматический выбор по умолчанию */
-    int test_mode = 0;
-    int quick_mode = 0;
-    int grid_mode = 0;
+    /* Проверяем аргументы */
+    int layout_only = 0;
+    int help = 0;
+    int test_opencv = 0;
 
-    /* Обработка аргументов командной строки */
     for (int i = 1; i < argc; i++)
     {
-        if (strcmp(argv[i], "-api") == 0)
-        {
-            detection_method = 0; /* Только Windows API */
-        }
-        else if (strcmp(argv[i], "-opencv") == 0)
-        {
-            detection_method = 1; /* Только OpenCV + OCR */
-        }
-        else if (strcmp(argv[i], "-grid") == 0)
-        {
-            grid_mode = 1; /* Режим 8-регионов */
-        }
+        if (strcmp(argv[i], "-layout") == 0 || strcmp(argv[i], "-l") == 0)
+            layout_only = 1;
         else if (strcmp(argv[i], "-test") == 0)
-        {
-            test_mode = 1;
-        }
-        else if (strcmp(argv[i], "-fulltest") == 0)
-        {
-            run_comprehensive_test();
-            return 0;
-        }
-        else if (strcmp(argv[i], "-fixed") == 0)
-        {
-            detection_method = 0; /* Для обратной совместимости */
-        }
-        else if (strcmp(argv[i], "-quick") == 0)
-        {
-            quick_mode = 1;
-        }
-        else if (strcmp(argv[i], "-testregions") == 0)
-        {
-            test_different_regions();
-            return 0;
-        }
-        else if (strcmp(argv[i], "-help") == 0 || strcmp(argv[i], "-h") == 0)
-        {
-            printf("\nUsage:\n");
-            printf("  automator_console.exe [options]\n\n");
-            printf("Options:\n");
-            printf("  -api         - use Windows API only (fastest)\n");
-            printf("  -opencv      - use OpenCV + 8-region analysis\n");
-            printf("  -grid        - 8-region grid analysis mode\n");
-            printf("  -fixed       - use fixed region (legacy)\n");
-            printf("  -test        - test OpenCV detection\n");
-            printf("  -testregions - test different capture regions\n");
-            printf("  -fulltest    - run comprehensive tests\n");
-            printf("  -quick       - quick layout check\n");
-            printf("  -help        - show this help\n\n");
-            return 0;
-        }
+            test_opencv = 1;
+        else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0)
+            help = 1;
     }
 
-    /* Быстрая проверка */
-    if (quick_mode)
+    if (help)
     {
-        quick_check();
+        printf("Usage:\n");
+        printf("  automator_console.exe           - Recognize all text in system tray\n");
+        printf("  automator_console.exe -layout   - Detect keyboard layout only\n");
+        printf("  automator_console.exe -test     - Test OpenCV text detection\n");
+        printf("  automator_console.exe -h        - Show this help\n");
         return 0;
     }
 
-    /* Режим тестирования */
-    if (test_mode)
+    if (layout_only)
     {
-        test_opencv_detection();
-        return 0;
+        /* Только определение раскладки */
+        printf("\n=== KEYBOARD LAYOUT DETECTION ===\n");
+        int layout = detect_layout_windows_api();
+
+        if (layout == 0)
+            printf("Detected layout: ENG (English)\n");
+        else if (layout == 1)
+            printf("Detected layout: RUS (Russian)\n");
+        else
+            printf("Could not detect layout\n");
     }
-
-    /* Режим 8-регионов */
-    if (grid_mode)
+    else if (test_opencv)
     {
-        ScreenRegion fixed_region = get_system_tray_region();
-        analyze_8grid_regions(fixed_region);
-        return 0;
-    }
+        /* Тест OpenCV детекции текста */
+        printf("\n=== OPENCV TEXT DETECTION TEST ===\n");
 
-    /* Определение раскладки */
-    int layout = detect_keyboard_layout(detection_method);
+        if (!opencv_init())
+        {
+            printf("OpenCV initialization failed\n");
+            return 1;
+        }
 
-    printf("=========================================\n");
-    if (layout >= 0)
-    {
-        printf("FINAL LAYOUT: %s\n", layout == 0 ? "ENG" : "RUS");
+        /* Получаем регион трея */
+        DetectedRegion tray = detect_system_tray_region_opencv();
+        ScreenRegion region = {tray.x, tray.y, tray.width, tray.height};
+
+        /* Ищем текстовые регионы */
+        int region_count = 0;
+        DetectedRegion *text_regions = find_text_regions_in_tray(region, &region_count);
+
+        printf("\nFound %d text regions:\n", region_count);
+        for (int i = 0; i < region_count; i++)
+        {
+            printf("  Region %d: %dx%d at (%d,%d), confidence: %.2f\n",
+                   i + 1, text_regions[i].width, text_regions[i].height,
+                   text_regions[i].x, text_regions[i].y, text_regions[i].confidence);
+
+            /* Сохраняем каждый регион для визуальной проверки */
+            char filename[256];
+            sprintf(filename, "opencv_test_region_%d_%lu.bmp", i, (unsigned long)GetCurrentProcessId());
+            capture_screen_region(text_regions[i].x, text_regions[i].y,
+                                  text_regions[i].width, text_regions[i].height,
+                                  filename);
+            printf("    Saved to: %s\n", filename);
+        }
+
+        if (text_regions)
+            free(text_regions);
+        opencv_cleanup();
     }
     else
     {
-        printf("LAYOUT ANALYSIS COMPLETE\n");
+        /* Полное распознавание текста с помощью OpenCV */
+        recognize_all_text_in_tray();
     }
+
+    printf("\n=========================================\n");
+    printf("Program completed\n");
     printf("=========================================\n");
-
-    /* Дополнительная информация */
-    printf("\nAdditional information:\n");
-    printf("- Screen resolution: %dx%d\n", get_screen_width(), get_screen_height());
-
-    /* Сравнение методов */
-    ScreenRegion fixed_region = get_system_tray_region();
-    printf("- Fixed indicator region: %dx%d at (%d,%d)\n",
-           fixed_region.width, fixed_region.height, fixed_region.x, fixed_region.y);
-
-    /* Сохранение скриншотов для отладки */
-    if (capture_screen_region(fixed_region.x, fixed_region.y,
-                              fixed_region.width, fixed_region.height,
-                              "debug_fixed.bmp"))
-    {
-        printf("- Fixed screenshot saved: debug_fixed.bmp\n");
-    }
-
-    printf("\nUsage:\n");
-    printf("  No parameters - automatic detection (recommended)\n");
-    printf("  -api          - use Windows API only\n");
-    printf("  -opencv       - use OpenCV + 8-region analysis\n");
-    printf("  -grid         - 8-region grid analysis mode\n");
-    printf("  -test         - test OpenCV detection\n");
-    printf("  -testregions  - test different capture regions\n");
-    printf("  -fulltest     - run comprehensive tests\n");
-    printf("  -quick        - quick layout check\n");
-    printf("  -fixed        - use fixed region (legacy mode)\n");
-    printf("  -help         - show help\n");
 
     return 0;
 }
