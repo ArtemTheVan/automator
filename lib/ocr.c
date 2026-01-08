@@ -171,53 +171,82 @@ static char *convert_utf8_to_cp1251(const char *utf8_str)
 /* Очищает текст OCR */
 static void clean_ocr_text(char *text)
 {
-    char cleaned[1024] = {0};
+    char cleaned[4096] = {0};
     int j = 0;
 
-    for (int i = 0; text[i] && j < 1023; i++)
+    for (int i = 0; text[i] && j < 4095; i++)
     {
         unsigned char c = (unsigned char)text[i];
 
-        /* Латинские буквы - в верхний регистр */
-        if (c >= 'a' && c <= 'z')
-        {
-            cleaned[j++] = c - 32; /* В верхний регистр */
-        }
-        else if (c >= 'A' && c <= 'Z')
+        /* Сохраняем все символы, которые могут быть полезными */
+
+        /* 1. Буквы латинские и кириллица */
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
         {
             cleaned[j++] = c;
         }
         /* Кириллица в CP1251 (А-Я, а-я, Ёё) */
         else if ((c >= 0xC0 && c <= 0xFF) || c == 0xA8 || c == 0xB8)
         {
-            /* Оставляем как есть, но можно преобразовать в верхний регистр */
-            if (c >= 0xE0 && c <= 0xFF)
-            {                            /* а-я */
-                cleaned[j++] = c - 0x20; /* В верхний регистр */
+            cleaned[j++] = c;
+        }
+        /* 2. Цифры */
+        else if (c >= '0' && c <= '9')
+        {
+            cleaned[j++] = c;
+        }
+        /* 3. Знаки пунктуации и специальные символы */
+        else if (c == '.' || c == ':' || c == ',' || c == ';' ||
+                 c == '-' || c == '_' || c == '/' || c == '\\' ||
+                 c == '(' || c == ')' || c == '[' || c == ']' ||
+                 c == '{' || c == '}' || c == '<' || c == '>' ||
+                 c == '!' || c == '?' || c == '@' || c == '#' ||
+                 c == '$' || c == '%' || c == '^' || c == '&' ||
+                 c == '*' || c == '+' || c == '=' || c == '|' ||
+                 c == '~' || c == '`' || c == '\'' || c == '"' ||
+                 c == ' ' || c == '\t')
+        {
+            cleaned[j++] = c;
+        }
+        /* 4. Преобразуем некоторые специфические символы */
+        else if (c == 0xE2)
+        {
+            /* Проверяем на длинное тире или другие Unicode символы */
+            if (text[i + 1] == 0x80 && text[i + 2] == 0x93) /* – */
+            {
+                cleaned[j++] = '-';
+                i += 2;
             }
-            else if (c == 0xB8)
-            {                        /* ё */
-                cleaned[j++] = 0xA8; /* Ё */
+            else if (text[i + 1] == 0x80 && text[i + 2] == 0x94) /* — */
+            {
+                cleaned[j++] = '-';
+                i += 2;
             }
             else
             {
                 cleaned[j++] = c;
             }
         }
-        /* Цифры */
-        else if (c >= '0' && c <= '9')
+        /* 5. Игнорируем управляющие символы и мусор */
+        else if (c < 32)
         {
-            cleaned[j++] = c;
+            /* Пропускаем управляющие символы */
+            continue;
         }
-        /* Пробелы и дефисы */
-        else if (c == ' ' || c == '-')
+        else
         {
+            /* Остальные символы оставляем как есть */
             cleaned[j++] = c;
         }
     }
 
     cleaned[j] = '\0';
-    strcpy(text, cleaned);
+
+    /* Копируем обратно, если изменилось */
+    if (strlen(text) != strlen(cleaned) || strcmp(text, cleaned) != 0)
+    {
+        strcpy(text, cleaned);
+    }
 }
 
 static int run_tesseract_simple(const char *image_path, const char *output_file, const char *language, const unsigned int psm)
@@ -264,10 +293,10 @@ static int contains_weird_chars(const char *text)
 static void fix_text_encoding(char *text)
 {
     /* Простая попытка исправить UTF-8 проблемы */
-    char fixed[1024] = {0};
+    char fixed[4096] = {0};
     int j = 0;
 
-    for (int i = 0; text[i] && j < 1023; i++)
+    for (int i = 0; text[i] && j < 4095; i++)
     {
         unsigned char c = (unsigned char)text[i];
 
@@ -305,6 +334,11 @@ static void fix_text_encoding(char *text)
             /* Печатные ASCII символы */
             fixed[j++] = c;
         }
+        else if (c == '\n' || c == '\r' || c == '\t')
+        {
+            /* Сохраняем пробельные символы */
+            fixed[j++] = c;
+        }
         /* Игнорируем остальное */
     }
 
@@ -315,17 +349,25 @@ static void fix_text_encoding(char *text)
 /* Рассчитывает уверенность распознавания */
 static float calculate_confidence(const char *text)
 {
-    int letter_count = 0;
+    int meaningful_count = 0;
     int total_chars = 0;
 
     for (int i = 0; text[i]; i++)
     {
         unsigned char c = (unsigned char)text[i];
+
+        /* Считаем осмысленные символы: буквы, цифры, знаки пунктуации */
         if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-            (c >= 0xC0 && c <= 0xFF)) /* Кириллица в CP1251 */
+            (c >= '0' && c <= '9') ||
+            (c >= 0xC0 && c <= 0xFF) || /* Кириллица в CP1251 */
+            c == '.' || c == ':' || c == ',' || c == ';' ||
+            c == '-' || c == '_' || c == '/' || c == '\\' ||
+            c == '(' || c == ')' || c == '[' || c == ']' ||
+            c == '{' || c == '}' || c == ' ' || c == '\t')
         {
-            letter_count++;
+            meaningful_count++;
         }
+
         if (c >= 32) /* Не управляющие символы */
         {
             total_chars++;
@@ -335,17 +377,10 @@ static float calculate_confidence(const char *text)
     if (total_chars == 0)
         return 0.0f;
 
-    float ratio = (float)letter_count / total_chars;
+    float ratio = (float)meaningful_count / total_chars;
 
     /* Базовая уверенность */
-    float confidence = 0.5f + ratio * 0.5f;
-
-    /* Дополнительные бонусы за ключевые слова */
-    if (strstr(text, "ENG") || strstr(text, "EN") || strstr(text, "US"))
-        confidence += 0.2f;
-    if (strstr(text, "RUS") || strstr(text, "RU") ||
-        strstr(text, "РУС") || strstr(text, "РУ"))
-        confidence += 0.2f;
+    float confidence = 0.3f + ratio * 0.7f;
 
     return confidence > 1.0f ? 1.0f : confidence;
 }
@@ -391,7 +426,7 @@ OCRResult ocr_from_file(const char *image_path, const char *language, const unsi
     /* Дополнительные параметры для улучшения распознавания */
     char command[4096];
 
-    /* УПРОЩЕННАЯ команда без whitelist - он может мешать распознаванию */
+    /* Вариант 1: Простая команда без сложных параметров */
     sprintf(command, "cmd /c \"\"C:\\Program Files\\Tesseract-OCR\\tesseract.exe\" \"%s\" \"%s\" -l %s --psm %u --dpi %u --oem 1\"",
             image_path, output_file, lang, actual_psm, actual_dpi);
 
@@ -403,17 +438,27 @@ OCRResult ocr_from_file(const char *image_path, const char *language, const unsi
     {
         printf("Tesseract returned error code: %d\n", ret);
 
-        /* Попробуем без указания DPI */
+        /* Попробуем с другими параметрами - упрощенный вариант */
         sprintf(command, "cmd /c \"\"C:\\Program Files\\Tesseract-OCR\\tesseract.exe\" \"%s\" \"%s\" -l %s --psm %u\"",
                 image_path, output_file, lang, actual_psm);
-        printf("Trying without DPI: %s\n", command);
+        printf("Trying simplified: %s\n", command);
 
         ret = system(command);
 
         if (ret != 0)
         {
-            result.error_code = OCR_ERROR_INIT_FAILED;
-            return result;
+            /* Последняя попытка: минимальная команда */
+            sprintf(command, "\"C:\\Program Files\\Tesseract-OCR\\tesseract.exe\" \"%s\" \"%s\" -l %s --psm %u",
+                    image_path, output_file, lang, actual_psm);
+            printf("Trying minimal: %s\n", command);
+
+            ret = system(command);
+
+            if (ret != 0)
+            {
+                result.error_code = OCR_ERROR_INIT_FAILED;
+                return result;
+            }
         }
     }
 
@@ -477,13 +522,16 @@ OCRResult ocr_from_file(const char *image_path, const char *language, const unsi
             result.text_length = (int)strlen(result.text);
         }
 
-        /* Удаляем все не-буквенные символы и приводим к верхнему регистру */
+        /* Исправляем кодировку если нужно */
+        fix_text_encoding(result.text);
+
+        /* Очищаем текст, сохраняя знаки пунктуации */
         clean_ocr_text(result.text);
     }
 
     if (result.text_length > 0)
     {
-        /* Рассчитываем уверенность на основе длины текста и содержания букв */
+        /* Рассчитываем уверенность */
         result.confidence = calculate_confidence(result.text);
         result.error_code = OCR_SUCCESS;
         printf("OCR recognized: '%s' (confidence: %.2f)\n", result.text, result.confidence);
