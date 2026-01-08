@@ -13,9 +13,18 @@ extern "C"
 {
 #endif
 
+#include "keyboard.h"
+#include "mouse.h"
 #include "screen.h"
 #include "opencv.h"
 #include "ocr.h"
+
+    /* Функции для работы с клавиатурой */
+    AUTOMATOR_API void simulate_keystroke(const char *text);
+
+    /* Функции для работы с мышью */
+    AUTOMATOR_API void simulate_mouse_sequence(const MouseAction *actions, int count);
+    AUTOMATOR_API void simulate_mouse_click_at(int x, int y);
 
     /* Функции для работы с экраном */
     AUTOMATOR_API int capture_screen_region(int x, int y, int width, int height, const char *filename);
@@ -24,6 +33,7 @@ extern "C"
     AUTOMATOR_API int get_screen_width(void);
     AUTOMATOR_API int get_screen_height(void);
     AUTOMATOR_API ScreenRegion get_system_tray_region(void);
+    AUTOMATOR_API ScreenRegion get_system_tray_region_auto(void);
 
     /* Функции OpenCV */
     AUTOMATOR_API int opencv_init(void);
