@@ -88,45 +88,74 @@ char *clean_ocr_text_for_display(const char *text)
     }
 
     /* Выделяем память для очищенного текста */
-    char *cleaned = (char *)malloc(strlen(text) + 1);
+    char *cleaned = (char *)malloc(strlen(text) * 2 + 1);
     int j = 0;
 
-    /* Удаляем лишние пробелы и непечатные символы */
+    /* Сохраняем все значимые символы */
     for (int i = 0; text[i]; i++)
     {
         unsigned char c = (unsigned char)text[i];
-        if (c >= 32 && c <= 126) /* Печатные ASCII символы */
+
+        /* Печатные ASCII символы */
+        if (c >= 32 && c <= 126)
         {
             cleaned[j++] = c;
         }
-        else if (c >= 0xC0 && c <= 0xFF) /* Кириллица в CP1251 */
+        /* Кириллица в CP1251 */
+        else if (c >= 0xC0 && c <= 0xFF)
         {
             cleaned[j++] = c;
         }
-        else if (c == '\n' || c == '\r')
+        /* Специальные символы CP1251 */
+        else if (c == 0xA8 || c == 0xB8) /* Ё, ё */
         {
+            cleaned[j++] = c;
+        }
+        /* Символы табуляции и пробелы */
+        else if (c == '\t' || c == '\n' || c == '\r')
+        {
+            /* Заменяем на пробелы */
             if (j > 0 && cleaned[j - 1] != ' ')
                 cleaned[j++] = ' ';
+        }
+        /* Остальные символы пропускаем или преобразуем */
+        else if (c == 0xE2)
+        {
+            /* Unicode символы */
+            if (text[i + 1] == 0x80 && text[i + 2] == 0x93) /* – */
+            {
+                cleaned[j++] = '-';
+                i += 2;
+            }
+            else if (text[i + 1] == 0x80 && text[i + 2] == 0x94) /* — */
+            {
+                cleaned[j++] = '-';
+                i += 2;
+            }
+            /* Пропускаем другие Unicode */
         }
     }
 
     cleaned[j] = '\0';
 
     /* Удаляем начальные и конечные пробелы */
-    while (j > 0 && cleaned[0] == ' ')
-    {
-        memmove(cleaned, cleaned + 1, j);
-        j--;
-    }
+    char *start = cleaned;
+    while (*start == ' ')
+        start++;
 
-    while (j > 0 && cleaned[j - 1] == ' ')
+    char *end = cleaned + j - 1;
+    while (end > start && *end == ' ')
+        end--;
+
+    *(end + 1) = '\0';
+
+    if (start != cleaned)
     {
-        cleaned[j - 1] = '\0';
-        j--;
+        memmove(cleaned, start, strlen(start) + 1);
     }
 
     /* Если текст пустой, возвращаем "-" */
-    if (j == 0)
+    if (strlen(cleaned) == 0)
     {
         free(cleaned);
         char *dash = (char *)malloc(2);
@@ -134,6 +163,9 @@ char *clean_ocr_text_for_display(const char *text)
         dash[1] = '\0';
         return dash;
     }
+
+    /* Изменяем размер памяти под фактическую длину */
+    cleaned = (char *)realloc(cleaned, strlen(cleaned) + 1);
 
     return cleaned;
 }
@@ -217,6 +249,7 @@ void recognize_all_text_in_tray(void)
         /* Пробуем разные языки OCR */
         char *best_text = NULL;
         float best_confidence = 0;
+        int best_strategy = -1;
 
         for (int strategy = 0; strategy < 3; strategy++)
         {
@@ -231,30 +264,46 @@ void recognize_all_text_in_tray(void)
             {
                 char *cleaned_text = clean_ocr_text_for_display(result.text);
 
-                /* Проверяем, что текст имеет смысл */
+                /* Проверяем качество распознавания по наличию знаков пунктуации */
+                int has_punctuation = 0;
                 int has_meaningful_chars = 0;
+
                 for (int j = 0; cleaned_text[j]; j++)
                 {
                     unsigned char c = cleaned_text[j];
+                    if (c == '.' || c == ':' || c == ',' || c == ';')
+                    {
+                        has_punctuation = 1;
+                    }
                     if ((c >= 'A' && c <= 'Z') ||
                         (c >= 'a' && c <= 'z') ||
                         (c >= '0' && c <= '9') ||
                         (c >= 0xC0 && c <= 0xFF)) /* Кириллица */
                     {
                         has_meaningful_chars = 1;
-                        break;
                     }
                 }
 
-                if (has_meaningful_chars && result.confidence > best_confidence)
+                /* Бонус к уверенности за знаки пунктуации */
+                float adjusted_confidence = result.confidence;
+                if (has_punctuation && has_meaningful_chars)
+                {
+                    adjusted_confidence += 0.2f;
+                    if (adjusted_confidence > 1.0f)
+                        adjusted_confidence = 1.0f;
+                }
+
+                if (has_meaningful_chars && adjusted_confidence > best_confidence)
                 {
                     if (best_text)
                         free(best_text);
                     best_text = cleaned_text;
-                    best_confidence = result.confidence;
+                    best_confidence = adjusted_confidence;
+                    best_strategy = strategy;
 
-                    printf("  Strategy %d: '%s' (confidence: %.2f)\n",
-                           strategy + 1, cleaned_text, result.confidence);
+                    printf("  Strategy %d: '%s' (confidence: %.2f%s)\n",
+                           strategy + 1, cleaned_text, adjusted_confidence,
+                           has_punctuation ? " +punctuation" : "");
                 }
                 else
                 {
@@ -268,7 +317,33 @@ void recognize_all_text_in_tray(void)
         /* Выводим лучший результат */
         if (best_text && strlen(best_text) > 0)
         {
-            printf("  Result: '%s'\n", best_text);
+            printf("  Result: '%s' (from strategy %d)\n", best_text, best_strategy + 1);
+
+            /* Анализируем результат на предмет возможных дат/времени */
+            if (strlen(best_text) == 8 &&
+                best_text[0] >= '0' && best_text[0] <= '9' &&
+                best_text[1] >= '0' && best_text[1] <= '9' &&
+                best_text[2] >= '0' && best_text[2] <= '9' &&
+                best_text[3] >= '0' && best_text[3] <= '9' &&
+                best_text[4] >= '0' && best_text[4] <= '9' &&
+                best_text[5] >= '0' && best_text[5] <= '9' &&
+                best_text[6] >= '0' && best_text[6] <= '9' &&
+                best_text[7] >= '0' && best_text[7] <= '9')
+            {
+                printf("  Note: Might be a date without separators: %c%c.%c%c.%c%c%c%c\n",
+                       best_text[0], best_text[1], best_text[2], best_text[3],
+                       best_text[4], best_text[5], best_text[6], best_text[7]);
+            }
+            else if (strlen(best_text) == 4 &&
+                     best_text[0] >= '0' && best_text[0] <= '9' &&
+                     best_text[1] >= '0' && best_text[1] <= '9' &&
+                     best_text[2] >= '0' && best_text[2] <= '9' &&
+                     best_text[3] >= '0' && best_text[3] <= '9')
+            {
+                printf("  Note: Might be time without separator: %c%c:%c%c\n",
+                       best_text[0], best_text[1], best_text[2], best_text[3]);
+            }
+
             free(best_text);
         }
         else
