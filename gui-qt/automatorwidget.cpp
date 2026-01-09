@@ -1,17 +1,29 @@
 #include "automatorwidget.h"
-#include <QScrollBar>
-#include <QTextBlock>
+#include "settingsdialog.h"
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QDir>
+#include <QMessageBox>
+#include <QFileDialog>
 #include <QTextStream>
 #include <QDebug>
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QAction>
+#include <QProcessEnvironment>
+#include <QCoreApplication>
+#include <QScrollBar>   // Добавьте эту строку
+#include <QTimer>       // Добавьте эту строку
+#include <QFont>        // Добавьте эту строку
+#include <QFontMetrics> // Добавьте эту строку
+#include <QDateTime>    // Добавьте эту строку
 #include <windows.h>
 #include <vector>
 
 // Для Qt 6
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QStringDecoder>
+#include <QStringConverter>
 #endif
 
 // Вспомогательная структура для хранения действий мыши
@@ -23,14 +35,39 @@ struct MouseActionStruct
 };
 
 // =========== AutomatorWidget ===========
-
 AutomatorWidget::AutomatorWidget(QWidget *parent)
-    : QWidget(parent), m_tabWidget(nullptr), m_editor(nullptr), m_lineNumbers(nullptr), m_outputBrowser(nullptr),
-      m_startButton(nullptr), m_stopButton(nullptr), m_recordButton(nullptr), m_loadButton(nullptr),
-      m_saveButton(nullptr), m_statusLabel(nullptr), m_lineColLabel(nullptr), m_fontSizeCombo(nullptr),
-      m_templateCombo(nullptr), m_menuBar(nullptr), m_scriptProcess(nullptr), m_recordingTimer(nullptr),
-      m_settings(nullptr), m_currentFile(""), m_pythonPath("python"), m_tempPythonFile(""),
-      m_isRecording(false), m_isModified(false)
+    : QWidget(parent),
+      m_tabWidget(nullptr),
+      m_editor(nullptr),
+      m_lineNumbers(nullptr),
+      m_outputBrowser(nullptr),
+      m_recordButton(nullptr),
+      m_loadButton(nullptr),
+      m_saveButton(nullptr),
+      m_startButton(nullptr),
+      m_stopButton(nullptr),
+      m_statusLabel(nullptr),
+      m_lineColLabel(nullptr),
+      m_fontSizeCombo(nullptr),
+      m_templateCombo(nullptr),
+      m_menuBar(nullptr),
+      m_fileMenu(nullptr), // Перенесено выше
+      m_editMenu(nullptr),
+      m_runMenu(nullptr),
+      m_settingsMenu(nullptr),
+      m_recentFilesMenu(nullptr),
+      m_scriptProcess(nullptr),
+      m_recordingTimer(nullptr),
+      m_settings(nullptr),
+      m_currentFile(""),
+      m_pythonPath("python"),
+      m_tempPythonFile(""),
+      m_mingwPath(""),
+      m_opencvPath(""),
+      m_automatorLibPath(""),
+      m_scriptsPath(""),
+      m_isRecording(false),
+      m_isModified(false)
 {
     // Инициализация настроек
     m_settings = new QSettings("Automator", "ScriptEditor", this);
@@ -41,7 +78,18 @@ AutomatorWidget::AutomatorWidget(QWidget *parent)
     setupUI();
     setupMenu();
     setupEditor();
-    findPython(); // Найти Python при запуске
+    // Загружаем настройки
+    loadSettings();
+
+    // Ищем Python если путь не указан
+    if (m_pythonPath == "python" || m_pythonPath.isEmpty())
+    {
+        findPython();
+    }
+    else
+    {
+        m_statusLabel->setText(QString("Python: %1").arg(m_pythonPath));
+    }
 
     // Пытаемся загрузить последний открытый файл
     QString lastFile = m_settings->value("lastOpenedFile").toString();
@@ -61,6 +109,103 @@ AutomatorWidget::~AutomatorWidget()
     }
 
     cleanupTempFile(); // Удалить временный файл
+}
+
+void AutomatorWidget::loadSettings()
+{
+    m_mingwPath = m_settings->value("mingwPath", "C:/msys64/mingw64/bin").toString();
+    m_opencvPath = m_settings->value("opencvPath", "C:/msys64/mingw64/bin").toString();
+    m_automatorLibPath = m_settings->value("automatorLibPath",
+                                           "D:/Projects/automator/lib/libautomator.dll")
+                             .toString();
+    m_scriptsPath = m_settings->value("scriptsPath",
+                                      "D:/Projects/automator/scripts")
+                        .toString();
+    m_pythonPath = m_settings->value("pythonPath", "python").toString();
+}
+
+void AutomatorWidget::saveSettings()
+{
+    m_settings->setValue("mingwPath", m_mingwPath);
+    m_settings->setValue("opencvPath", m_opencvPath);
+    m_settings->setValue("automatorLibPath", m_automatorLibPath);
+    m_settings->setValue("scriptsPath", m_scriptsPath);
+    m_settings->setValue("pythonPath", m_pythonPath);
+    m_settings->sync();
+}
+
+void AutomatorWidget::openSettings()
+{
+    SettingsDialog dlg(m_settings, this);
+    if (dlg.exec() == QDialog::Accepted)
+    {
+        // Обновляем пути из настроек
+        m_mingwPath = dlg.mingwPath();
+        m_opencvPath = dlg.opencvPath();
+        m_pythonPath = dlg.pythonPath();
+        m_automatorLibPath = dlg.automatorLibPath();
+        m_scriptsPath = dlg.scriptsPath();
+
+        // Сохраняем настройки
+        saveSettings();
+
+        // Обновляем статус
+        m_statusLabel->setText("Настройки сохранены");
+        QTimer::singleShot(2000, [this]()
+                           { m_statusLabel->setText("Готов"); });
+    }
+}
+
+QString AutomatorWidget::buildEnvironmentPath() const
+{
+    QStringList pathList;
+
+    // 1. Временная директория (самый высокий приоритет)
+    pathList << QDir::tempPath();
+
+    // 2. Пути из настроек
+    if (!m_mingwPath.isEmpty())
+    {
+        QDir mingwDir(m_mingwPath);
+        if (mingwDir.exists())
+        {
+            pathList << m_mingwPath;
+        }
+    }
+
+    if (!m_opencvPath.isEmpty())
+    {
+        QDir opencvDir(m_opencvPath);
+        if (opencvDir.exists())
+        {
+            pathList << m_opencvPath;
+        }
+    }
+
+    // 3. Директория с библиотекой
+    QFileInfo libInfo(m_automatorLibPath);
+    if (libInfo.exists())
+    {
+        pathList << libInfo.absolutePath();
+    }
+
+    // 4. Системный PATH
+    pathList << QProcessEnvironment::systemEnvironment().value("PATH");
+
+    // 5. Директория приложения
+    pathList << QCoreApplication::applicationDirPath();
+
+    // Удаляем дубликаты и пустые строки
+    QStringList uniquePaths;
+    for (const QString &path : pathList)
+    {
+        if (!path.isEmpty() && !uniquePaths.contains(path, Qt::CaseInsensitive))
+        {
+            uniquePaths << QDir::toNativeSeparators(path);
+        }
+    }
+
+    return uniquePaths.join(";");
 }
 
 void AutomatorWidget::findPython()
@@ -97,32 +242,40 @@ void AutomatorWidget::findPython()
 bool AutomatorWidget::copyWrapperToTempDir()
 {
     QString wrapperPath = QDir::tempPath() + "/wrapper_automator.py";
-    QString sourcePath = "D:/Projects/automator/scripts/wrapper_automator.py"; // Или полный путь к файлу
-    if (!QFile::exists(wrapperPath))
+
+    // Удаляем старый файл
+    if (QFile::exists(wrapperPath))
     {
-        QFile sourceFile(sourcePath);
-        if (sourceFile.exists())
+        QFile::remove(wrapperPath);
+    }
+
+    // Пробуем скопировать из пути из настроек
+    QStringList sourcePaths;
+
+    if (!m_scriptsPath.isEmpty())
+    {
+        sourcePaths << m_scriptsPath + "/wrapper_automator.py";
+    }
+
+    // Стандартные пути
+    sourcePaths << "D:/Projects/automator/scripts/wrapper_automator.py";
+    sourcePaths << QCoreApplication::applicationDirPath() + "/scripts/wrapper_automator.py";
+    sourcePaths << QCoreApplication::applicationDirPath() + "/../scripts/wrapper_automator.py";
+
+    for (const QString &sourcePath : sourcePaths)
+    {
+        if (QFile::exists(sourcePath))
         {
-            if (sourceFile.copy(wrapperPath))
+            if (QFile::copy(sourcePath, wrapperPath))
             {
-                qDebug() << "wrapper_automator.py скопирован в:" << wrapperPath;
-                m_outputBrowser->append(QString("wrapper_automator.py скопирован в: %1").arg(wrapperPath));
+                qDebug() << "wrapper_automator.py скопирован из:" << sourcePath;
                 return true;
             }
-            else
-            {
-                qDebug() << "Ошибка копирования wrapper_automator.py";
-                m_outputBrowser->append(QString("Ошибка копирования wrapper_automator.py: %1").arg(wrapperPath));
-            }
         }
-        else
-        {
-            qDebug() << "Исходный файл wrapper_automator.py не найден:" << sourcePath;
-            m_outputBrowser->append(QString("Исходный файл wrapper_automator.py не найден: %1").arg(sourcePath));
-        }
-        return false;
     }
-    return true;
+
+    qDebug() << "Не удалось найти wrapper_automator.py";
+    return false;
 }
 
 QString AutomatorWidget::createTempPythonFile(const QString &script)
@@ -140,12 +293,18 @@ QString AutomatorWidget::createTempPythonFile(const QString &script)
     }
 
     QTextStream out(&file);
+    // Для Qt6 используем setEncoding вместо setCodec
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    out.setEncoding(QStringConverter::Utf8);
+#else
+    out.setCodec("UTF-8");
+#endif
 
-    // Добавляем импорт модуля wrapper_automator из временной директории
     out << "# -*- coding: utf-8 -*-\n";
     out << "import sys\n";
     out << "import os\n";
-    out << "import io\n\n";
+    out << "import io\n";
+    out << "import traceback\n\n";
 
     // Устанавливаем кодировку вывода
     out << "# Устанавливаем кодировку вывода в UTF-8\n";
@@ -153,38 +312,27 @@ QString AutomatorWidget::createTempPythonFile(const QString &script)
     out << "sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')\n\n";
 
     out << "# Добавляем временную директорию в путь\n";
-    out << "sys.path.insert(0, r'" << tempDir << "')\n\n";
+    out << "sys.path.insert(0, r'" << tempDir.replace("\\", "\\\\") << "')\n\n";
+
+    out << "print(f'Текущая директория: {os.getcwd()}')\n";
+    out << "print(f'Путь к скрипту: {__file__}')\n";
+    out << "print(f'Доступные модули: {sys.modules.keys()}')\n\n";
 
     out << "try:\n";
+    out << "    print('Пытаюсь импортировать wrapper_automator...')\n";
     out << "    from wrapper_automator import automator\n";
     out << "    print('Модуль wrapper_automator успешно загружен')\n";
     out << "except ImportError as e:\n";
     out << "    print(f'Ошибка импорта wrapper_automator: {e}')\n";
-    out << "    print('Попытка загрузить из других путей...')\n";
-    out << "    # Добавляем дополнительные пути\n";
-    out << "    additional_paths = [\n";
-    out << "        '.',\n";
-    out << "        '..',\n";
-    out << "        '../scripts',\n";
-    out << "        'D:/Projects/automator/scripts',\n";
-    out << "    ]\n";
-    out << "    for path in additional_paths:\n";
-    out << "        if os.path.exists(path):\n";
-    out << "            abs_path = os.path.abspath(path)\n";
-    out << "            if abs_path not in sys.path:\n";
-    out << "                sys.path.append(abs_path)\n";
-    out << "    try:\n";
-    out << "        from wrapper_automator import automator\n";
-    out << "        print('Модуль wrapper_automator загружен из дополнительных путей')\n";
-    out << "    except ImportError:\n";
-    out << "        print('Не удалось загрузить wrapper_automator')\n";
-    out << "        sys.exit(1)\n\n";
+    out << "    traceback.print_exc()\n";
+    out << "    sys.exit(1)\n\n";
 
     out << "# =========== Начало пользовательского скрипта ===========\n\n";
     out << script;
 
     file.close();
 
+    qDebug() << "Создан временный файл:" << fileName;
     return fileName;
 }
 
@@ -363,6 +511,7 @@ void AutomatorWidget::setupUI()
 
 void AutomatorWidget::setupMenu()
 {
+    // Файл
     m_fileMenu = m_menuBar->addMenu("Файл");
 
     QAction *newAction = m_fileMenu->addAction("Новый");
@@ -393,6 +542,7 @@ void AutomatorWidget::setupMenu()
     exitAction->setShortcut(QKeySequence::Quit);
     connect(exitAction, &QAction::triggered, this, &QWidget::close);
 
+    // Правка
     m_editMenu = m_menuBar->addMenu("Правка");
 
     QAction *undoAction = m_editMenu->addAction("Отменить");
@@ -417,6 +567,7 @@ void AutomatorWidget::setupMenu()
     pasteAction->setShortcut(QKeySequence::Paste);
     connect(pasteAction, &QAction::triggered, m_editor, &QTextEdit::paste);
 
+    // Выполнение
     m_runMenu = m_menuBar->addMenu("Выполнение");
 
     QAction *runAction = m_runMenu->addAction("Выполнить скрипт");
@@ -427,8 +578,41 @@ void AutomatorWidget::setupMenu()
     stopAction->setShortcut(QKeySequence("Shift+F5"));
     connect(stopAction, &QAction::triggered, this, &AutomatorWidget::stopScript);
 
+    m_runMenu->addSeparator();
+
     QAction *findPythonAction = m_runMenu->addAction("Найти Python");
     connect(findPythonAction, &QAction::triggered, this, &AutomatorWidget::findPython);
+
+    // Настройки (ДОБАВЬТЕ ЭТОТ БЛОК)
+    m_settingsMenu = m_menuBar->addMenu("Настройки");
+
+    QAction *settingsAction = m_settingsMenu->addAction("Пути зависимостей...");
+    settingsAction->setShortcut(QKeySequence("Ctrl+P"));
+    connect(settingsAction, &QAction::triggered, this, &AutomatorWidget::openSettings);
+
+    QAction *showPathsAction = m_settingsMenu->addAction("Показать текущие пути");
+    connect(showPathsAction, &QAction::triggered, [this]()
+            {
+        QString message = QString(
+            "Текущие пути:\n\n"
+            "MinGW: %1\n"
+            "OpenCV: %2\n"
+            "Python: %3\n"
+            "Библиотека: %4\n"
+            "Скрипты: %5\n\n"
+            "PATH: %6"
+        ).arg(m_mingwPath, m_opencvPath, m_pythonPath, 
+              m_automatorLibPath, m_scriptsPath, buildEnvironmentPath());
+        
+        QMessageBox::information(this, "Текущие пути", message); });
+
+    m_settingsMenu->addSeparator();
+
+    QAction *reloadSettingsAction = m_settingsMenu->addAction("Перезагрузить настройки");
+    connect(reloadSettingsAction, &QAction::triggered, [this]()
+            {
+        loadSettings();
+        m_statusLabel->setText("Настройки перезагружены"); });
 }
 
 void AutomatorWidget::setupEditor()
@@ -444,7 +628,6 @@ void AutomatorWidget::setupEditor()
 }
 
 // =========== Слоты ===========
-
 void AutomatorWidget::runScript()
 {
     QString script = m_editor->toPlainText();
@@ -457,13 +640,13 @@ void AutomatorWidget::runScript()
     // Очищаем предыдущий временный файл
     cleanupTempFile();
 
-    // Копируем wrapper_automator.py во временную директорию
+    // Копируем зависимости
     if (!copyWrapperToTempDir())
     {
-        m_outputBrowser->append("Предупреждение: Не удалось скопировать wrapper_automator.py. Возможно, он уже существует.");
+        m_outputBrowser->append("Предупреждение: Не удалось скопировать wrapper_automator.py");
     }
 
-    // Создаем новый временный файл
+    // Создаем временный файл
     m_tempPythonFile = createTempPythonFile(script);
     if (m_tempPythonFile.isEmpty())
     {
@@ -471,6 +654,7 @@ void AutomatorWidget::runScript()
         return;
     }
 
+    // Настраиваем UI
     m_startButton->setEnabled(false);
     m_stopButton->setEnabled(true);
     m_recordButton->setEnabled(false);
@@ -484,16 +668,25 @@ void AutomatorWidget::runScript()
     m_outputBrowser->append("=== Запуск Python скрипта ===");
     m_outputBrowser->append(QString("Используется Python: %1").arg(m_pythonPath));
     m_outputBrowser->append(QString("Файл скрипта: %1").arg(m_tempPythonFile));
+    m_outputBrowser->append(QString("Временная директория: %1").arg(QDir::tempPath()));
+
+    // Показываем используемые пути
+    QString envPath = buildEnvironmentPath();
+    m_outputBrowser->append(QString("PATH: %1").arg(envPath));
 
     // Создаем процесс Python
     m_scriptProcess = new QProcess(this);
     m_scriptProcess->setProcessChannelMode(QProcess::MergedChannels);
 
-    // Устанавливаем переменные окружения для правильной кодировки
+    // Настраиваем окружение
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert("PYTHONIOENCODING", "utf-8");
     env.insert("PYTHONUTF8", "1");
+    env.insert("PATH", envPath); // Устанавливаем наш PATH
+    env.insert("AUTOMATOR_DLL_PATH", QDir::tempPath() + "/libautomator.dll");
+
     m_scriptProcess->setProcessEnvironment(env);
+    m_scriptProcess->setWorkingDirectory(QDir::tempPath());
 
     // Подключаем сигналы
     connect(m_scriptProcess, &QProcess::readyReadStandardOutput,
@@ -503,13 +696,13 @@ void AutomatorWidget::runScript()
     connect(m_scriptProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, &AutomatorWidget::onScriptFinished);
 
-    // Запускаем Python с параметрами для UTF-8
+    // Запускаем Python
     m_scriptProcess->start(m_pythonPath, {"-X", "utf8", m_tempPythonFile});
 
     if (!m_scriptProcess->waitForStarted(3000))
     {
-        m_outputBrowser->append("Ошибка: Не удалось запустить Python. Убедитесь, что Python установлен и добавлен в PATH");
-        m_outputBrowser->append("Попробуйте использовать действие 'Найти Python' в меню 'Выполнение'");
+        m_outputBrowser->append("Ошибка: Не удалось запустить Python.");
+        m_outputBrowser->append("Проверьте путь к Python в настройках.");
         cleanupTempFile();
         onScriptFinished(-1, QProcess::CrashExit);
         return;
