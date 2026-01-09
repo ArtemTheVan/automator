@@ -1,4 +1,7 @@
-QT += widgets core
+
+QT += core gui widgets
+
+greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
 # Настройки проекта
 TARGET = automator_qt
@@ -19,10 +22,14 @@ win32 {
 }
 
 # Файлы проекта
-SOURCES += main.cpp \
-           automatorwidget.cpp
+SOURCES += \
+    main.cpp \
+    automatorwidget.cpp \
+    settingsdialog.cpp
 
-HEADERS += automatorwidget.h
+HEADERS += \
+    automatorwidget.h \
+    settingsdialog.h
 
 # Настройки компилятора
 QMAKE_CXXFLAGS += -Wall -Wextra
