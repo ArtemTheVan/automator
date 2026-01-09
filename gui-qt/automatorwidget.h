@@ -80,6 +80,7 @@ private:
     bool copyDllToTempDir();
     bool copyMingwDependenciesToTempDir();
 
+    QString createSimpleTempPythonFile(const QString &script);
     QString createTempPythonFile(const QString &script);
     void cleanupTempFile();
 

@@ -160,52 +160,50 @@ QString AutomatorWidget::buildEnvironmentPath() const
 {
     QStringList pathList;
 
-    // 1. Временная директория (самый высокий приоритет)
-    pathList << QDir::tempPath();
-
-    // 2. Пути из настроек
+    // 1. MinGW ПЕРВЫЙ - КРИТИЧЕСКИ ВАЖНО!
     if (!m_mingwPath.isEmpty())
     {
         QDir mingwDir(m_mingwPath);
         if (mingwDir.exists())
         {
-            pathList << m_mingwPath;
+            pathList << QDir::toNativeSeparators(m_mingwPath);
         }
     }
 
-    if (!m_opencvPath.isEmpty())
-    {
-        QDir opencvDir(m_opencvPath);
-        if (opencvDir.exists())
-        {
-            pathList << m_opencvPath;
-        }
-    }
-
-    // 3. Директория с библиотекой
+    // 2. Путь к библиотеке automator
     QFileInfo libInfo(m_automatorLibPath);
     if (libInfo.exists())
     {
-        pathList << libInfo.absolutePath();
+        pathList << QDir::toNativeSeparators(libInfo.absolutePath());
     }
 
-    // 4. Системный PATH
-    pathList << QProcessEnvironment::systemEnvironment().value("PATH");
+    // 3. Временная директория
+    pathList << QDir::toNativeSeparators(QDir::tempPath());
 
-    // 5. Директория приложения
-    pathList << QCoreApplication::applicationDirPath();
+    // 4. НЕ добавляем путь к release, чтобы избежать конфликта
 
-    // Удаляем дубликаты и пустые строки
-    QStringList uniquePaths;
-    for (const QString &path : pathList)
+    // 5. Системный PATH
+    QString systemPath = QProcessEnvironment::systemEnvironment().value("PATH");
+    QStringList systemPaths = systemPath.split(";");
+
+    // Фильтруем пути - убираем дубликаты и ненужные пути
+    for (const QString &sysPath : systemPaths)
     {
-        if (!path.isEmpty() && !uniquePaths.contains(path, Qt::CaseInsensitive))
+        if (sysPath.isEmpty())
+            continue;
+
+        // Исключаем пути, которые могут содержать дублирующие DLL
+        QString lowerPath = sysPath.toLower();
+        if (lowerPath.contains("gui-qt\\release"))
+            continue;
+
+        if (!pathList.contains(sysPath, Qt::CaseInsensitive))
         {
-            uniquePaths << QDir::toNativeSeparators(path);
+            pathList << sysPath;
         }
     }
 
-    return uniquePaths.join(";");
+    return pathList.join(";");
 }
 
 void AutomatorWidget::findPython()
@@ -280,7 +278,6 @@ bool AutomatorWidget::copyWrapperToTempDir()
 
 QString AutomatorWidget::createTempPythonFile(const QString &script)
 {
-    // Создаем временный файл в системной временной директории
     QString tempDir = QDir::tempPath();
     QString fileName = QString("%1/automator_python_%2.py")
                            .arg(tempDir)
@@ -293,41 +290,30 @@ QString AutomatorWidget::createTempPythonFile(const QString &script)
     }
 
     QTextStream out(&file);
-    // Для Qt6 используем setEncoding вместо setCodec
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     out.setEncoding(QStringConverter::Utf8);
-#else
-    out.setCodec("UTF-8");
-#endif
 
     out << "# -*- coding: utf-8 -*-\n";
     out << "import sys\n";
     out << "import os\n";
-    out << "import io\n";
-    out << "import traceback\n\n";
-
-    // Устанавливаем кодировку вывода
-    out << "# Устанавливаем кодировку вывода в UTF-8\n";
-    out << "sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')\n";
-    out << "sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')\n\n";
-
-    out << "# Добавляем временную директорию в путь\n";
-    out << "sys.path.insert(0, r'" << tempDir.replace("\\", "\\\\") << "')\n\n";
-
+    out << "\n";
+    out << "# Выводим информацию о среде\n";
     out << "print(f'Текущая директория: {os.getcwd()}')\n";
     out << "print(f'Путь к скрипту: {__file__}')\n";
-    out << "print(f'Доступные модули: {sys.modules.keys()}')\n\n";
-
+    out << "print(f'PATH: {os.environ.get(\"PATH\", \"\")}')\n";
+    out << "\n";
+    out << "# Простой импорт wrapper\n";
+    out << "sys.path.insert(0, r'" << tempDir.replace("\\", "\\\\") << "')\n";
     out << "try:\n";
-    out << "    print('Пытаюсь импортировать wrapper_automator...')\n";
     out << "    from wrapper_automator import automator\n";
-    out << "    print('Модуль wrapper_automator успешно загружен')\n";
+    out << "    print('Модуль wrapper_automator успешно импортирован')\n";
     out << "except ImportError as e:\n";
     out << "    print(f'Ошибка импорта wrapper_automator: {e}')\n";
+    out << "    import traceback\n";
     out << "    traceback.print_exc()\n";
-    out << "    sys.exit(1)\n\n";
-
-    out << "# =========== Начало пользовательского скрипта ===========\n\n";
+    out << "    sys.exit(1)\n";
+    out << "\n";
+    out << "# =========== Начало пользовательского скрипта ===========\n";
+    out << "\n";
     out << script;
 
     file.close();
@@ -627,6 +613,129 @@ void AutomatorWidget::setupEditor()
         updateTitle(); });
 }
 
+bool AutomatorWidget::copyDllToTempDir()
+{
+    QString sourceDllPath = m_automatorLibPath;
+
+    if (sourceDllPath.isEmpty() || !QFile::exists(sourceDllPath))
+    {
+        qDebug() << "Исходный файл DLL не найден:" << sourceDllPath;
+        return false;
+    }
+
+    QString tempDllPath = QDir::tempPath() + "/libautomator.dll";
+
+    // Удаляем старый файл
+    if (QFile::exists(tempDllPath))
+    {
+        QFile::remove(tempDllPath);
+    }
+
+    // Копируем файл
+    if (QFile::copy(sourceDllPath, tempDllPath))
+    {
+        qDebug() << "DLL скопирована в:" << tempDllPath;
+        return true;
+    }
+    else
+    {
+        qDebug() << "Не удалось скопировать DLL";
+        return false;
+    }
+}
+
+QString AutomatorWidget::createSimpleTempPythonFile(const QString &script)
+{
+    QString tempDir = QDir::tempPath();
+    QString fileName = QString("%1/simple_python_%2.py")
+                           .arg(tempDir)
+                           .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+
+    QFile file(fileName);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+        return "";
+    }
+
+    QTextStream out(&file);
+    out.setEncoding(QStringConverter::Utf8);
+
+    out << "# -*- coding: utf-8 -*-\n";
+    out << "import sys\n";
+    out << "import os\n";
+    out << "import ctypes\n";
+    out << "from ctypes import wintypes\n";
+    out << "\n";
+    out << "# Выводим информацию о среде\n";
+    out << "print('=== Запуск Python скрипта ===')\n";
+    out << "print(f'Используется Python: {sys.executable}')\n";
+    out << "print(f'Текущая директория: {os.getcwd()}')\n";
+    out << "\n";
+    out << "# КРИТИЧЕСКИ ВАЖНО: Для Python 3.8+ добавляем пути поиска DLL\n";
+    out << "if hasattr(os, 'add_dll_directory'):\n";
+    out << "    # Путь к MinGW\n";
+    out << "    mingw_path = r'" << m_mingwPath.replace("\\", "\\\\") << "'\n";
+    out << "    # Путь к библиотеке automator\n";
+    QString libDirPath = QFileInfo(m_automatorLibPath).absolutePath();
+    out << "    lib_path = r'" << libDirPath.replace("\\", "\\\\") << "'\n";
+    out << "    # Добавляем оба пути\n";
+    out << "    for path in [mingw_path, lib_path]:\n";
+    out << "        if os.path.exists(path):\n";
+    out << "            os.add_dll_directory(path)\n";
+    out << "            print(f'Добавлен путь поиска DLL: {path}')\n";
+    out << "else:\n";
+    out << "    print('Внимание: Python < 3.8, os.add_dll_directory недоступен')\n";
+    out << "\n";
+    out << "# Проверяем PATH\n";
+    out << "paths = os.environ.get('PATH', '').split(';')\n";
+    out << "print('Первый путь в PATH:', paths[0] if paths else 'пусто')\n";
+    out << "\n";
+    out << "# Пробуем загрузить DLL\n";
+    out << "dll_path = r'" << m_automatorLibPath.replace("\\", "\\\\") << "'\n";
+    out << "print(f'Пробую загрузить DLL: {dll_path}')\n";
+    out << "print(f'Файл существует: {os.path.exists(dll_path)}')\n";
+    out << "\n";
+    out << "if os.path.exists(dll_path):\n";
+    out << "    try:\n";
+    out << "        # Используем CDLL для MinGW\n";
+    out << "        lib = ctypes.CDLL(dll_path)\n";
+    out << "        print('УСПЕХ: DLL загружена через CDLL')\n";
+    out << "        \n";
+    out << "        # Проверяем функции\n";
+    out << "        if hasattr(lib, 'simulate_keystroke'):\n";
+    out << "            print('Функция simulate_keystroke найдена')\n";
+    out << "            lib.simulate_keystroke.argtypes = [ctypes.c_char_p]\n";
+    out << "            lib.simulate_keystroke.restype = None\n";
+    out << "            lib.simulate_keystroke(b'Test from Python!')\n";
+    out << "            print('Функция simulate_keystroke вызвана успешно')\n";
+    out << "        else:\n";
+    out << "            print('Функция simulate_keystroke НЕ найдена')\n";
+    out << "            \n";
+    out << "    except Exception as e:\n";
+    out << "        print(f'Ошибка загрузки DLL: {e}')\n";
+    out << "        import traceback\n";
+    out << "        traceback.print_exc()\n";
+    out << "        # Пробуем альтернативные пути\n";
+    out << "        temp_dll = os.path.join(os.environ.get('TEMP', ''), 'libautomator.dll')\n";
+    out << "        print(f'Пробую загрузить: {temp_dll}')\n";
+    out << "        if os.path.exists(temp_dll):\n";
+    out << "            try:\n";
+    out << "                lib = ctypes.CDLL(temp_dll)\n";
+    out << "                print('УСПЕХ: DLL загружена из временной директории')\n";
+    out << "            except Exception as e2:\n";
+    out << "                print(f'Ошибка загрузки из временной директории: {e2}')\n";
+    out << "else:\n";
+    out << "    print('ОШИБКА: Файл DLL не найден')\n";
+    out << "\n";
+    out << "# Пользовательский скрипт\n";
+    out << script;
+
+    file.close();
+
+    qDebug() << "Создан простой временный файл:" << fileName;
+    return fileName;
+}
+
 // =========== Слоты ===========
 void AutomatorWidget::runScript()
 {
@@ -640,17 +749,11 @@ void AutomatorWidget::runScript()
     // Очищаем предыдущий временный файл
     cleanupTempFile();
 
-    // Копируем зависимости
-    if (!copyWrapperToTempDir())
-    {
-        m_outputBrowser->append("Предупреждение: Не удалось скопировать wrapper_automator.py");
-    }
-
     // Создаем временный файл
-    m_tempPythonFile = createTempPythonFile(script);
+    m_tempPythonFile = createSimpleTempPythonFile(script);
     if (m_tempPythonFile.isEmpty())
     {
-        m_outputBrowser->append("Ошибка: Не удалось создать временный файл");
+        m_outputBrowser->append("Ошибка: Не удалось создать временный файл скрипта");
         return;
     }
 
@@ -666,13 +769,6 @@ void AutomatorWidget::runScript()
     // Очищаем вывод
     m_outputBrowser->clear();
     m_outputBrowser->append("=== Запуск Python скрипта ===");
-    m_outputBrowser->append(QString("Используется Python: %1").arg(m_pythonPath));
-    m_outputBrowser->append(QString("Файл скрипта: %1").arg(m_tempPythonFile));
-    m_outputBrowser->append(QString("Временная директория: %1").arg(QDir::tempPath()));
-
-    // Показываем используемые пути
-    QString envPath = buildEnvironmentPath();
-    m_outputBrowser->append(QString("PATH: %1").arg(envPath));
 
     // Создаем процесс Python
     m_scriptProcess = new QProcess(this);
@@ -682,11 +778,48 @@ void AutomatorWidget::runScript()
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert("PYTHONIOENCODING", "utf-8");
     env.insert("PYTHONUTF8", "1");
-    env.insert("PATH", envPath); // Устанавливаем наш PATH
-    env.insert("AUTOMATOR_DLL_PATH", QDir::tempPath() + "/libautomator.dll");
+
+    // КРИТИЧЕСКИ ВАЖНО: Устанавливаем правильный PATH перед запуском
+    QString newPath = buildEnvironmentPath();
+    env.insert("PATH", newPath);
 
     m_scriptProcess->setProcessEnvironment(env);
-    m_scriptProcess->setWorkingDirectory(QDir::tempPath());
+
+    // КРИТИЧЕСКИ ВАЖНО: Устанавливаем рабочую директорию в путь MinGW
+    // Это нужно потому что Windows ищет DLL сначала в рабочей директории
+    QDir mingwDir(m_mingwPath);
+    if (mingwDir.exists())
+    {
+        m_scriptProcess->setWorkingDirectory(mingwDir.absolutePath());
+    }
+    else
+    {
+        // Если MinGW путь не существует, используем путь к библиотеке
+        QFileInfo dllInfo(m_automatorLibPath);
+        if (dllInfo.exists())
+        {
+            m_scriptProcess->setWorkingDirectory(dllInfo.absolutePath());
+        }
+        else
+        {
+            m_scriptProcess->setWorkingDirectory(QDir::tempPath());
+        }
+    }
+
+    // Выводим информацию для отладки
+    m_outputBrowser->append(QString("Используется Python: %1").arg(m_pythonPath));
+    m_outputBrowser->append(QString("Файл скрипта: %1").arg(m_tempPythonFile));
+    m_outputBrowser->append(QString("Рабочая директория: %1").arg(m_scriptProcess->workingDirectory()));
+    m_outputBrowser->append(QString("Установлен PATH:"));
+    QStringList pathList = newPath.split(";");
+    for (const QString &path : pathList.mid(0, 10))
+    { // Показываем первые 10 путей
+        m_outputBrowser->append("  " + path);
+    }
+    if (pathList.size() > 10)
+    {
+        m_outputBrowser->append(QString("  ... и еще %1 путей").arg(pathList.size() - 10));
+    }
 
     // Подключаем сигналы
     connect(m_scriptProcess, &QProcess::readyReadStandardOutput,
@@ -697,7 +830,10 @@ void AutomatorWidget::runScript()
             this, &AutomatorWidget::onScriptFinished);
 
     // Запускаем Python
-    m_scriptProcess->start(m_pythonPath, {"-X", "utf8", m_tempPythonFile});
+    QStringList arguments;
+    arguments << "-X" << "utf8" << m_tempPythonFile;
+
+    m_scriptProcess->start(m_pythonPath, arguments);
 
     if (!m_scriptProcess->waitForStarted(3000))
     {
