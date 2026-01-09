@@ -6,6 +6,7 @@
 class QSettings;
 class QLineEdit;
 class QLabel;
+class QProgressDialog;
 
 class SettingsDialog : public QDialog
 {
@@ -30,12 +31,20 @@ private slots:
     void validatePaths();
     void saveSettings();
     void restoreDefaults();
+    void searchDependencies();
 
 private:
     void setupUI();
     void loadSettings();
+    QString findMingwInSystem();
+    QString findOpenCVInSystem();
+    QString findPythonInSystem();
+    QString findAutomatorLibInSystem();
+    QString findScriptsInSystem();
+    bool checkPathExists(const QString &path);
 
     QSettings *m_settings;
+    QProgressDialog *m_progressDialog;
 
     QLineEdit *m_mingwEdit;
     QLineEdit *m_opencvEdit;

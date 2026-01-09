@@ -13,11 +13,17 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QProcess>
+#include <QProgressDialog>
+#include <QStandardPaths>
+#include <QApplication>
+#include <QThread>
+#include <QDesktopServices>
 
 SettingsDialog::SettingsDialog(QSettings *settings, QWidget *parent)
     : QDialog(parent), m_settings(settings),
       m_mingwEdit(nullptr), m_opencvEdit(nullptr), m_pythonEdit(nullptr),
-      m_automatorLibEdit(nullptr), m_scriptsEdit(nullptr), m_statusLabel(nullptr)
+      m_automatorLibEdit(nullptr), m_scriptsEdit(nullptr),
+      m_statusLabel(nullptr), m_progressDialog(nullptr)
 {
     setWindowTitle("Settings");
     setMinimumWidth(600);
@@ -33,6 +39,12 @@ SettingsDialog::~SettingsDialog()
 void SettingsDialog::setupUI()
 {
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
+
+    // Search button at top
+    QPushButton *searchBtn = new QPushButton("🔍 Auto-detect Dependencies");
+    searchBtn->setToolTip("Search for required libraries and dependencies in the system");
+    connect(searchBtn, &QPushButton::clicked, this, &SettingsDialog::searchDependencies);
+    mainLayout->addWidget(searchBtn);
 
     // Paths group
     QGroupBox *pathsGroup = new QGroupBox("Dependency Paths");
@@ -286,4 +298,277 @@ void SettingsDialog::restoreDefaults()
     m_automatorLibEdit->setText("D:/Projects/automator/lib/libautomator.dll");
     m_scriptsEdit->setText("D:/Projects/automator/scripts");
     validatePaths();
+}
+
+void SettingsDialog::searchDependencies()
+{
+    // Create progress dialog
+    m_progressDialog = new QProgressDialog("Searching for dependencies...", "Cancel", 0, 5, this);
+    m_progressDialog->setWindowModality(Qt::WindowModal);
+    m_progressDialog->setMinimumDuration(0);
+    m_progressDialog->setValue(0);
+
+    // Search for MinGW
+    m_progressDialog->setLabelText("Searching for MinGW...");
+    QApplication::processEvents();
+    QString mingwPath = findMingwInSystem();
+    if (!mingwPath.isEmpty())
+    {
+        m_mingwEdit->setText(mingwPath);
+    }
+    m_progressDialog->setValue(1);
+
+    // Search for OpenCV
+    m_progressDialog->setLabelText("Searching for OpenCV...");
+    QApplication::processEvents();
+    QString opencvPath = findOpenCVInSystem();
+    if (!opencvPath.isEmpty())
+    {
+        m_opencvEdit->setText(opencvPath);
+    }
+    m_progressDialog->setValue(2);
+
+    // Search for Python
+    m_progressDialog->setLabelText("Searching for Python...");
+    QApplication::processEvents();
+    QString pythonPath = findPythonInSystem();
+    if (!pythonPath.isEmpty())
+    {
+        m_pythonEdit->setText(pythonPath);
+    }
+    m_progressDialog->setValue(3);
+
+    // Search for libautomator
+    m_progressDialog->setLabelText("Searching for libautomator.dll...");
+    QApplication::processEvents();
+    QString automatorPath = findAutomatorLibInSystem();
+    if (!automatorPath.isEmpty())
+    {
+        m_automatorLibEdit->setText(automatorPath);
+    }
+    m_progressDialog->setValue(4);
+
+    // Search for scripts
+    m_progressDialog->setLabelText("Searching for scripts...");
+    QApplication::processEvents();
+    QString scriptsPath = findScriptsInSystem();
+    if (!scriptsPath.isEmpty())
+    {
+        m_scriptsEdit->setText(scriptsPath);
+    }
+    m_progressDialog->setValue(5);
+
+    // Close progress dialog
+    m_progressDialog->close();
+    delete m_progressDialog;
+    m_progressDialog = nullptr;
+
+    // Validate found paths
+    validatePaths();
+
+    // Show summary
+    QMessageBox::information(this, "Search Complete",
+                             "Dependency search completed. Please verify the found paths.");
+}
+
+bool SettingsDialog::checkPathExists(const QString &path)
+{
+    return QFileInfo::exists(path);
+}
+
+QString SettingsDialog::findMingwInSystem()
+{
+    // Common MinGW installation paths
+    QStringList possiblePaths = {
+        "C:/msys64/mingw64/bin",
+        "C:/msys64/mingw32/bin",
+        "C:/mingw64/bin",
+        "C:/mingw/bin",
+        "C:/Program Files/mingw64/bin",
+        "C:/Program Files/mingw-w64/mingw64/bin",
+        "C:/Program Files (x86)/mingw-w64/mingw64/bin",
+        QDir::homePath() + "/msys64/mingw64/bin",
+        // Check PATH environment variable
+        QStandardPaths::findExecutable("g++")};
+
+    // Remove empty paths and check if they exist
+    possiblePaths.removeAll("");
+
+    for (const QString &path : possiblePaths)
+    {
+        if (checkPathExists(path))
+        {
+            QDir dir(path);
+            // Check for typical MinGW files
+            QStringList requiredFiles = {"g++.exe", "gcc.exe", "ar.exe"};
+            bool hasAllFiles = true;
+            for (const QString &file : requiredFiles)
+            {
+                if (!QFile::exists(dir.filePath(file)))
+                {
+                    hasAllFiles = false;
+                    break;
+                }
+            }
+            if (hasAllFiles)
+            {
+                return QDir::toNativeSeparators(dir.absolutePath());
+            }
+        }
+    }
+
+    return QString();
+}
+
+QString SettingsDialog::findOpenCVInSystem()
+{
+    // Common OpenCV installation paths
+    QStringList possiblePaths = {
+        "C:/opencv/build/x64/vc15/bin",
+        "C:/opencv/build/x64/vc14/bin",
+        "C:/opencv/build/x64/mingw/bin",
+        "C:/opencv/build/bin",
+        "C:/Program Files/opencv/build/x64/vc15/bin",
+        "C:/Program Files/opencv/build/x64/vc14/bin",
+        "C:/Program Files (x86)/opencv/build/x64/vc15/bin",
+        "C:/msys64/mingw64/bin", // Often OpenCV DLLs are here
+        // Look for OpenCV DLLs in MinGW path if set
+        m_mingwEdit->text()};
+
+    // Remove empty paths and check if they exist
+    possiblePaths.removeAll("");
+
+    for (const QString &path : possiblePaths)
+    {
+        if (checkPathExists(path))
+        {
+            QDir dir(path);
+            // Check for OpenCV DLLs
+            QFileInfoList dlls = dir.entryInfoList({"opencv_*.dll"}, QDir::Files);
+            if (!dlls.isEmpty())
+            {
+                return QDir::toNativeSeparators(dir.absolutePath());
+            }
+        }
+    }
+
+    return QString();
+}
+
+QString SettingsDialog::findPythonInSystem()
+{
+    // Common Python installation paths
+    QStringList possiblePaths = {
+        "C:/Python39/python.exe",
+        "C:/Python38/python.exe",
+        "C:/Python37/python.exe",
+        "C:/Python36/python.exe",
+        "C:/Python310/python.exe",
+        "C:/Program Files/Python39/python.exe",
+        "C:/Program Files/Python38/python.exe",
+        "C:/Program Files/Python37/python.exe",
+        "C:/Program Files/Python36/python.exe",
+        "C:/Program Files/Python310/python.exe",
+        "C:/Program Files (x86)/Python39/python.exe",
+        "C:/Program Files (x86)/Python38/python.exe",
+        "C:/Program Files (x86)/Python37/python.exe",
+        "C:/Program Files (x86)/Python36/python.exe",
+        "C:/Program Files (x86)/Python310/python.exe",
+        QDir::homePath() + "/AppData/Local/Programs/Python/Python39/python.exe",
+        QDir::homePath() + "/AppData/Local/Programs/Python/Python38/python.exe",
+        QDir::homePath() + "/AppData/Local/Programs/Python/Python37/python.exe",
+        // Check PATH
+        QStandardPaths::findExecutable("python"),
+        QStandardPaths::findExecutable("python3")};
+
+    // Remove empty paths and check if they exist
+    possiblePaths.removeAll("");
+
+    for (const QString &path : possiblePaths)
+    {
+        if (checkPathExists(path))
+        {
+            QFileInfo file(path);
+            if (file.isExecutable() && file.fileName().contains("python", Qt::CaseInsensitive))
+            {
+                return QDir::toNativeSeparators(file.absoluteFilePath());
+            }
+        }
+    }
+
+    return QString();
+}
+
+QString SettingsDialog::findAutomatorLibInSystem()
+{
+    // Common places to look for libautomator.dll
+    QStringList possiblePaths = {
+        // Project structure
+        QApplication::applicationDirPath() + "/libautomator.dll",
+        QApplication::applicationDirPath() + "/../lib/libautomator.dll",
+        QApplication::applicationDirPath() + "/../../lib/libautomator.dll",
+        QApplication::applicationDirPath() + "/../../automator/lib/libautomator.dll",
+        // User documents
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/automator/lib/libautomator.dll",
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/libautomator.dll",
+        // Desktop
+        QStandardPaths::writableLocation(QStandardPaths::DesktopLocation) + "/automator/lib/libautomator.dll",
+        // Common project locations
+        "D:/Projects/automator/lib/libautomator.dll",
+        "C:/Projects/automator/lib/libautomator.dll",
+        QDir::homePath() + "/Projects/automator/lib/libautomator.dll"};
+
+    // Remove empty paths and check if they exist
+    possiblePaths.removeAll("");
+
+    for (const QString &path : possiblePaths)
+    {
+        if (checkPathExists(path))
+        {
+            QFileInfo file(path);
+            if (file.suffix().toLower() == "dll")
+            {
+                return QDir::toNativeSeparators(file.absoluteFilePath());
+            }
+        }
+    }
+
+    return QString();
+}
+
+QString SettingsDialog::findScriptsInSystem()
+{
+    // Common places to look for scripts
+    QStringList possiblePaths = {
+        // Project structure
+        QApplication::applicationDirPath() + "/scripts",
+        QApplication::applicationDirPath() + "/../scripts",
+        QApplication::applicationDirPath() + "/../../scripts",
+        QApplication::applicationDirPath() + "/../../automator/scripts",
+        // User documents
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/automator/scripts",
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/scripts",
+        // Common project locations
+        "D:/Projects/automator/scripts",
+        "C:/Projects/automator/scripts",
+        QDir::homePath() + "/Projects/automator/scripts"};
+
+    // Remove empty paths and check if they exist and contain scripts
+    possiblePaths.removeAll("");
+
+    for (const QString &path : possiblePaths)
+    {
+        if (checkPathExists(path))
+        {
+            QDir dir(path);
+            // Check if directory contains at least one script file
+            QFileInfoList files = dir.entryInfoList({"*.py", "*.sh", "*.bat", "*.ps1"}, QDir::Files);
+            if (!files.isEmpty())
+            {
+                return QDir::toNativeSeparators(dir.absolutePath());
+            }
+        }
+    }
+
+    return QString();
 }
