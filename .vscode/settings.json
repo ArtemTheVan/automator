@@ -1,0 +1,19 @@
+{
+  "editor.formatOnSave": true,
+  
+  // Глобальный форматтер (если не задан для конкретного языка)
+  "editor.defaultFormatter": null,
+  
+  // Python - Black Formatter
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter"
+  },
+  
+  // C/C++ - форматтер из C/C++ расширения (рекомендуется)
+  "[c]": {
+    "editor.defaultFormatter": "ms-vscode.cpptools"
+  },
+  "[cpp]": {
+    "editor.defaultFormatter": "ms-vscode.cpptools"
+  }
+}
