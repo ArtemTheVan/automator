@@ -92,85 +92,68 @@ class Automator:
         self._dll_path = dll_path
         self._load_library()
         self._setup_functions()
+
         self._initialized = True
 
-        print(f"[Automator] Библиотека загружена успешно")
+        print(f"[Automator] Инициализация прошла успешно")
 
     def _load_library(self):
-        """Загружает библиотеку automator.dll."""
-        import traceback
+        """Загружает библиотеку"""
+        # Выводим информацию о среде\n";
+        print("=== Запуск Python скрипта ===")
+        print(f"Используется Python: {sys.executable}")
+        print(f"Текущая директория: {os.getcwd()}")
+        # Проверяем PATH
+        paths = os.environ.get("PATH", "").split(";")
+        print("Первый путь в PATH:", paths[0] if paths else "пусто")
+        # Временная директория (где должна быть скопирована DLL)
+        temp_dir = os.environ.get("TEMP", "") or os.environ.get("TMP", "")
+        temp_dll = os.path.join(temp_dir, "libautomator.dll")
 
-        print(f"[Automator] Python версия: {sys.version}")
-        print(f"[Automator] Рабочая директория: {os.getcwd()}")
-        print(f"[Automator] Путь к скрипту: {__file__}")
-        print(f"[Automator] PATH: {os.environ.get('PATH', '')}")
-        print(
-            f"[Automator] AUTOMATOR_DLL_PATH: {os.environ.get('AUTOMATOR_DLL_PATH', '')}"
-        )
+        # Проверяем путь из переменной окружения
+        # env_dll = os.environ.get("AUTOMATOR_DLL_PATH")
+        env_dll = os.environ.get("PATH")
 
-        # Собираем все возможные пути
-        dll_paths = []
+        # Список возможных путей
+        possible_paths = [
+            self._dll_path,
+            env_dll,
+            temp_dll,
+            "libautomator.dll",
+            "./libautomator.dll",
+        ]
 
-        # Из переменной окружения
-        env_path = os.environ.get("AUTOMATOR_DLL_PATH")
-        if env_path:
-            dll_paths.append(env_path)
+        # print(f"dll_path: {dll_path}")
+        print(f"self._dll_path: {self._dll_path}")
+        print(f"temp_dir: {temp_dir}")
+        print(f"temp_dll: {temp_dll}")
+        print(f"env_dll: {env_dll}")
 
-        # Стандартные пути
-        dll_paths.extend(
-            [
-                r"D:\Projects\automator\lib\libautomator.dll",
-                r"C:\Projects\automator\lib\libautomator.dll",
-                os.path.join(os.getcwd(), "libautomator.dll"),
-                os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)), "libautomator.dll"
-                ),
-                "libautomator.dll",
-                "./libautomator.dll",
-                "../lib/libautomator.dll",
-                "../../lib/libautomator.dll",
-            ]
-        )
+        if os.path.exists(temp_dll):
+            print(f"Файл не существует: {temp_dll}")
 
-        print(f"[Automator] Проверяю пути к библиотеке:")
-        for path in dll_paths:
-            exists = os.path.exists(path)
-            status = "✓" if exists else "✗"
-            print(f"  [{status}] {path}")
-
-            if exists:
+        for path in possible_paths:
+            if path and os.path.exists(path):
+                # КРИТИЧЕСКИ ВАЖНО: Для Python 3.8+ добавляем пути поиска DLL\n";
+                if hasattr(os, "add_dll_directory"):
+                    os.add_dll_directory(path)
+                    print(f"Добавлен путь поиска DLL: {path}")
+                else:
+                    print("Внимание: Python < 3.8, os.add_dll_directory недоступен")
+                print(f"Пробую загрузить: {path}")
                 try:
-                    # Попробуем загрузить
-                    self.lib = ctypes.WinDLL(path)
-                    print(f"[Automator] Библиотека загружена из: {path}")
-
-                    # Проверяем доступные функции
-                    print(f"[Automator] Функции библиотеки:")
-                    for func in dir(self.lib):
-                        if not func.startswith("_"):
-                            print(f"    - {func}")
-
+                    self.lib = ctypes.CDLL(path)  # CDLL для MinGW
+                    print(f"Библиотека загружена: {path}")
                     return
                 except Exception as e:
-                    print(f"[Automator] Ошибка загрузки {path}: {e}")
-                    traceback.print_exc()
+                    print(f"Ошибка загрузки {path}: {e}")
+            else:
+                print(f"Файл библиотеки не существует: {path}")
 
-        # Если не удалось загрузить
-        print("[Automator] Критическая ошибка: не удалось загрузить библиотеку")
-        print(
-            "[Automator] Проверьте зависимости библиотеки с помощью Dependency Walker"
-        )
-        raise FileNotFoundError(
-            "Не удалось найти или загрузить библиотеку libautomator.dll"
-        )
+        raise FileNotFoundError("Не удалось загрузить библиотеку")
 
     def _setup_functions(self):
-        """
-        Настраивает типы аргументов и возвращаемых значений для функций библиотеки.
-        """
-        if not self.lib:
-            raise RuntimeError("[Automator] Библиотека не загружена")
-
+        """Настраивает функции"""
         # simulate_keystroke(const char *text)
         self.lib.simulate_keystroke.argtypes = [c_char_p]
         self.lib.simulate_keystroke.restype = None
@@ -386,7 +369,7 @@ class Automator:
 # =========== Глобальный экземпляр для удобства ===========
 
 # Создаем глобальный экземпляр
-automator = Automator()
+automator = Automator("D:/Projects/automator/lib/libautomator.dll")
 
 # =========== Экспорт ===========
 
