@@ -646,7 +646,8 @@ bool AutomatorWidget::copyDllToTempDir()
 
 QString AutomatorWidget::createSimpleTempPythonFile(const QString &script)
 {
-    QString tempDir = QDir::tempPath();
+    // QString tempDir = QDir::tempPath();
+    QString tempDir = "D:/Projects/automator/scripts";
     QString fileName = QString("%1/simple_python_%2.py")
                            .arg(tempDir)
                            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
@@ -664,7 +665,6 @@ QString AutomatorWidget::createSimpleTempPythonFile(const QString &script)
     out << "import sys\n";
     out << "import os\n";
     out << "import ctypes\n";
-    out << "from ctypes import wintypes\n";
     out << "\n";
     out << "# Выводим информацию о среде\n";
     out << "print('=== Запуск Python скрипта ===')\n";
@@ -704,10 +704,6 @@ QString AutomatorWidget::createSimpleTempPythonFile(const QString &script)
     out << "        # Проверяем функции\n";
     out << "        if hasattr(lib, 'simulate_keystroke'):\n";
     out << "            print('Функция simulate_keystroke найдена')\n";
-    out << "            lib.simulate_keystroke.argtypes = [ctypes.c_char_p]\n";
-    out << "            lib.simulate_keystroke.restype = None\n";
-    out << "            lib.simulate_keystroke(b'Test from Python!')\n";
-    out << "            print('Функция simulate_keystroke вызвана успешно')\n";
     out << "        else:\n";
     out << "            print('Функция simulate_keystroke НЕ найдена')\n";
     out << "            \n";
