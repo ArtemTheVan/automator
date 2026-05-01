@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --version)",
+      "Bash(where:*)",
+      "Bash(cmd.exe /c \"where node 2>nul || echo NOT_FOUND\")",
+      "Bash(test:*)",
+      "Bash(cmd //c \"cd /d d:\\\\ClaudeProjects\\\\FaceForge && npm install\")",
+      "Bash(cmd //c \"cd /d d:\\\\ClaudeProjects\\\\FaceForge && npm run dev\")",
+      "Bash(cmd //c \"start cmd /k npx http-server -p 9003 -o faceforge1.html -c-1\")",
+      "Bash(cmd //c \"start cmd /k npx http-server -p 9004 -o faceforge2.html -c-1\")",
+      "Bash(cmd //c \"start cmd /k npx http-server -p 9005 -o faceforge3.html -c-1\")",
+      "Bash(cmd //c \"netstat -an | findstr :9003\")",
+      "Bash(cmd //c \"node server.js\")",
+      "Bash(cmd //c \"netstat -ano | findstr :9002\")",
+      "Bash(cmd //c \"taskkill /PID 7100 /F\")",
+      "Bash(curl:*)",
+      "Bash(cmd.exe /c \"tasklist /FI \"\"PID eq 17700\"\"\")",
+      "Bash(cmd.exe /c \"tasklist /FI \"\"PID eq 7644\"\"\")",
+      "Read(//d//**)",
+      "Bash(cmd.exe /c \"taskkill /PID 17700 /F > D:\\\\ClaudeProjects\\\\FaceForge\\\\_kill.txt 2>&1\")",
+      "Bash(ls:*)",
+      "Bash(netstat:*)",
+      "Bash(powershell -NoProfile -Command \"Stop-Process -Id 17700 -Force; Write-Host ''KILLED''\")",
+      "Bash(npm run dev:*)",
+      "Bash(npx tsc:*)",
+      "Bash(findstr:*)",
+      "Bash(npx next build)",
+      "Bash(npx next dev:*)",
+      "Bash(taskkill:*)",
+      "Bash(npm run build:*)",
+      "Bash(echo:*)"
+    ]
+  },
+  "env": {
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000"
+  },
+  "model": "opus"
+}
