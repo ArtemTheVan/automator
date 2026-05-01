@@ -1,14 +1,16 @@
 # console/Makefile - Консольное приложение
+#
+# Окружение: MSYS2 (mingw64).
 
-CC = gcc
+CC ?= gcc
 CFLAGS = -O2 -Wall -Wextra -I../lib
-LDFLAGS = -L../lib -lautomator -luser32 -lgdi32 -lole32 -loleaut32 -mconsole -Wl,--subsystem,console
+LDFLAGS = -L../lib -lautomator -luser32 -lgdi32 -lole32 -loleaut32 \
+          -mconsole -Wl,--subsystem,console
 
 TARGET = automator_console.exe
 SOURCES = main.c
 OBJECTS = $(SOURCES:.c=.o)
 
-# Подпроекты
 LIB_DEP = ../lib/libautomator.dll
 
 all: $(LIB_DEP) $(TARGET)
@@ -20,21 +22,19 @@ $(TARGET): $(OBJECTS) $(LIB_DEP)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(LIB_DEP):
-	@echo "Сборка библиотеки..."
-	cd ../lib && $(MAKE) dynamic
+	@echo "Building library..."
+	$(MAKE) -C ../lib dynamic
 
 clean:
-	@echo "Очистка проекта..."
-	-@rm -f $(TARGET) 2>/dev/null || true
-	-@rm -f *.o 2>/dev/null || true
-	@echo "Очистка завершена"
+	@echo "Cleaning console..."
+	@rm -f $(TARGET) *.o
 
 run: $(TARGET)
-	@echo "Запуск консольной версии..."
+	@echo "Running console..."
 	@./$(TARGET)
 
 test: $(TARGET)
-	@echo "Запуск тестов..."
+	@echo "Running tests..."
 	@./$(TARGET)
 
 .PHONY: all clean run test

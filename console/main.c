@@ -50,7 +50,7 @@ int detect_layout_windows_api(void)
 void save_image_for_debug(ScreenRegion region, const char *name)
 {
     char filename[256];
-    sprintf(filename, "debug_%s_%lu.bmp", name, (unsigned long)GetCurrentProcessId());
+    snprintf(filename, sizeof(filename), "debug_%s_%lu.bmp", name, (unsigned long)GetCurrentProcessId());
 
     if (capture_screen_region(region.x, region.y, region.width, region.height, filename))
     {
@@ -62,7 +62,7 @@ void save_image_for_debug(ScreenRegion region, const char *name)
 OCRResult ocr_from_region(ScreenRegion region, const char *language, int psm, int dpi)
 {
     char filename[256];
-    sprintf(filename, "temp_ocr_region_%lu.bmp", (unsigned long)GetCurrentProcessId());
+    snprintf(filename, sizeof(filename), "temp_ocr_region_%lu.bmp", (unsigned long)GetCurrentProcessId());
 
     if (!capture_screen_region(region.x, region.y, region.width, region.height, filename))
     {
@@ -243,7 +243,7 @@ void recognize_all_text_in_tray(void)
 
         /* Сохраняем регион для отладки */
         char debug_name[50];
-        sprintf(debug_name, "text_region_%d", i);
+        snprintf(debug_name, sizeof(debug_name), "text_region_%d", i);
         save_image_for_debug((ScreenRegion){region.x, region.y, region.width, region.height}, debug_name);
 
         /* Пробуем разные языки OCR */
@@ -361,15 +361,14 @@ void recognize_all_text_in_tray(void)
 /* Основная функция */
 int main(int argc, char *argv[])
 {
-    printf("=========================================\n");
-    printf("   System Tray Text Recognizer v2.0\n");
-    printf("   (OpenCV Text Detection + OCR)\n");
-    printf("=========================================\n\n");
+    /* Инициализация: DPI awareness и т. п. */
+    automator_init();
 
     /* Проверяем аргументы */
     int layout_only = 0;
     int help = 0;
     int test_opencv = 0;
+    int version = 0;
 
     for (int i = 1; i < argc; i++)
     {
@@ -379,15 +378,29 @@ int main(int argc, char *argv[])
             test_opencv = 1;
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0)
             help = 1;
+        else if (strcmp(argv[i], "-V") == 0 || strcmp(argv[i], "--version") == 0)
+            version = 1;
     }
+
+    if (version)
+    {
+        printf("automator %s\n", automator_version());
+        return 0;
+    }
+
+    printf("=========================================\n");
+    printf("   System Tray Text Recognizer %s\n", automator_version());
+    printf("   (OpenCV Text Detection + OCR)\n");
+    printf("=========================================\n\n");
 
     if (help)
     {
         printf("Usage:\n");
-        printf("  automator_console.exe           - Recognize all text in system tray\n");
-        printf("  automator_console.exe -layout   - Detect keyboard layout only\n");
-        printf("  automator_console.exe -test     - Test OpenCV text detection\n");
-        printf("  automator_console.exe -h        - Show this help\n");
+        printf("  automator_console.exe              Recognize all text in system tray\n");
+        printf("  automator_console.exe -layout      Detect keyboard layout only\n");
+        printf("  automator_console.exe -test        Test OpenCV text detection\n");
+        printf("  automator_console.exe -h           Show this help\n");
+        printf("  automator_console.exe --version    Print version and exit\n");
         return 0;
     }
 
@@ -432,7 +445,7 @@ int main(int argc, char *argv[])
 
             /* Сохраняем каждый регион для визуальной проверки */
             char filename[256];
-            sprintf(filename, "opencv_test_region_%d_%lu.bmp", i, (unsigned long)GetCurrentProcessId());
+            snprintf(filename, sizeof(filename), "opencv_test_region_%d_%lu.bmp", i, (unsigned long)GetCurrentProcessId());
             capture_screen_region(text_regions[i].x, text_regions[i].y,
                                   text_regions[i].width, text_regions[i].height,
                                   filename);
