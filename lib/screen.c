@@ -38,7 +38,7 @@ int capture_screen_region(int x, int y, int width, int height, const char *filen
     int result = save_bitmap_to_file(hBitmap, filename);
     DeleteObject(hBitmap);
 
-    printf("Screen region captured: %s\n", filename);
+    LOG_DEBUG("Screen region captured: %s", filename);
     return result;
 }
 
@@ -77,16 +77,16 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
     /* Получаем информацию о битмапе */
     if (!GetObject(hBitmap, sizeof(BITMAP), &bmp))
     {
-        printf("Failed to get bitmap info\n");
+        LOG_ERROR("Failed to get bitmap info");
         return 0;
     }
 
-    printf("Bitmap dimensions: %ldx%ld, bpp: %d\n", bmp.bmWidth, bmp.bmHeight, bmp.bmBitsPixel);
+    LOG_DEBUG("Bitmap dimensions: %ldx%ld, bpp: %d", bmp.bmWidth, bmp.bmHeight, bmp.bmBitsPixel);
 
     /* Проверяем размеры */
     if (bmp.bmWidth <= 0 || bmp.bmHeight <= 0)
     {
-        printf("Invalid bitmap dimensions: %ldx%ld\n", bmp.bmWidth, bmp.bmHeight);
+        LOG_ERROR("Invalid bitmap dimensions: %ldx%ld", bmp.bmWidth, bmp.bmHeight);
         return 0;
     }
 
@@ -108,13 +108,13 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
     DWORD lineSize = ((bmp.bmWidth * 24 + 31) / 32) * 4;
     dwBmpSize = lineSize * bmp.bmHeight;
 
-    printf("Bitmap size calculation: lineSize=%lu, dwBmpSize=%lu\n", lineSize, dwBmpSize);
+    LOG_DEBUG("Bitmap size calculation: lineSize=%lu, dwBmpSize=%lu", lineSize, dwBmpSize);
 
     /* Выделяем память для пиксельных данных */
     lpbitmap = (char *)malloc(dwBmpSize);
     if (!lpbitmap)
     {
-        printf("Failed to allocate memory for bitmap data\n");
+        LOG_ERROR("Failed to allocate memory for bitmap data");
         return 0;
     }
 
@@ -122,7 +122,7 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
     hDC = GetDC(NULL);
     if (!hDC)
     {
-        printf("Failed to get device context\n");
+        LOG_ERROR("Failed to get device context");
         free(lpbitmap);
         return 0;
     }
@@ -131,7 +131,7 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
     if (!GetDIBits(hDC, hBitmap, 0, bmp.bmHeight, lpbitmap,
                    (BITMAPINFO *)&bi, DIB_RGB_COLORS))
     {
-        printf("GetDIBits failed, error: %lu\n", GetLastError());
+        LOG_ERROR("GetDIBits failed, error: %lu", GetLastError());
         free(lpbitmap);
         ReleaseDC(NULL, hDC);
         return 0;
@@ -150,7 +150,7 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
                        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE)
     {
-        printf("Failed to create file %s, error: %lu\n", filename, GetLastError());
+        LOG_ERROR("Failed to create file %s, error: %lu", filename, GetLastError());
         free(lpbitmap);
         return 0;
     }
@@ -161,7 +161,7 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
     if (!WriteFile(hFile, &bmfHeader, sizeof(BITMAPFILEHEADER), &dwBytesWritten, NULL) ||
         dwBytesWritten != sizeof(BITMAPFILEHEADER))
     {
-        printf("Failed to write bitmap file header\n");
+        LOG_ERROR("Failed to write bitmap file header");
         writeSuccess = FALSE;
     }
 
@@ -169,7 +169,7 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
         (!WriteFile(hFile, &bi, sizeof(BITMAPINFOHEADER), &dwBytesWritten, NULL) ||
          dwBytesWritten != sizeof(BITMAPINFOHEADER)))
     {
-        printf("Failed to write bitmap info header\n");
+        LOG_ERROR("Failed to write bitmap info header");
         writeSuccess = FALSE;
     }
 
@@ -177,7 +177,7 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
         (!WriteFile(hFile, lpbitmap, dwBmpSize, &dwBytesWritten, NULL) ||
          dwBytesWritten != dwBmpSize))
     {
-        printf("Failed to write bitmap data\n");
+        LOG_ERROR("Failed to write bitmap data");
         writeSuccess = FALSE;
     }
 
@@ -187,7 +187,7 @@ int save_bitmap_to_file(HBITMAP hBitmap, const char *filename)
 
     if (writeSuccess)
     {
-        printf("Bitmap saved successfully: %s (%ldx%ld)\n", filename, bmp.bmWidth, bmp.bmHeight);
+        LOG_DEBUG("Bitmap saved successfully: %s (%ldx%ld)", filename, bmp.bmWidth, bmp.bmHeight);
         return 1;
     }
     else
@@ -222,8 +222,8 @@ ScreenRegion get_system_tray_region()
     region.x = screen_width - region.width - 90;   /* Правая часть */
     region.y = screen_height - region.height - 10; /* Нижняя часть */
 
-    printf("System tray region (fixed): %dx%d at (%d,%d)\n",
-           region.width, region.height, region.x, region.y);
+    LOG_DEBUG("System tray region (fixed): %dx%d at (%d,%d)",
+              region.width, region.height, region.x, region.y);
 
     return region;
 }

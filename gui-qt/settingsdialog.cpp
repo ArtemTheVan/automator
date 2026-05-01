@@ -18,6 +18,21 @@
 #include <QApplication>
 #include <QThread>
 #include <QDesktopServices>
+#include <QCoreApplication>
+
+// Дефолты вычисляются относительно расположения exe — никаких захардкоженных
+// абсолютных путей вида D:/Projects/...
+static QString defaultLibPath()
+{
+    return QDir(QCoreApplication::applicationDirPath())
+        .absoluteFilePath("../lib/libautomator.dll");
+}
+
+static QString defaultScriptsPath()
+{
+    return QDir(QCoreApplication::applicationDirPath())
+        .absoluteFilePath("../scripts");
+}
 
 SettingsDialog::SettingsDialog(QSettings *settings, QWidget *parent)
     : QDialog(parent), m_settings(settings),
@@ -126,12 +141,8 @@ void SettingsDialog::loadSettings()
     m_mingwEdit->setText(m_settings->value("mingwPath", "C:/msys64/mingw64/bin").toString());
     m_opencvEdit->setText(m_settings->value("opencvPath", "C:/msys64/mingw64/bin").toString());
     m_pythonEdit->setText(m_settings->value("pythonPath", "python").toString());
-    m_automatorLibEdit->setText(m_settings->value("automatorLibPath",
-                                                  "D:/Projects/automator/lib/libautomator.dll")
-                                    .toString());
-    m_scriptsEdit->setText(m_settings->value("scriptsPath",
-                                             "D:/Projects/automator/scripts")
-                               .toString());
+    m_automatorLibEdit->setText(m_settings->value("automatorLibPath", defaultLibPath()).toString());
+    m_scriptsEdit->setText(m_settings->value("scriptsPath", defaultScriptsPath()).toString());
 
     validatePaths();
 }
@@ -295,8 +306,8 @@ void SettingsDialog::restoreDefaults()
     m_mingwEdit->setText("C:/msys64/mingw64/bin");
     m_opencvEdit->setText("C:/msys64/mingw64/bin");
     m_pythonEdit->setText("python");
-    m_automatorLibEdit->setText("D:/Projects/automator/lib/libautomator.dll");
-    m_scriptsEdit->setText("D:/Projects/automator/scripts");
+    m_automatorLibEdit->setText(defaultLibPath());
+    m_scriptsEdit->setText(defaultScriptsPath());
     validatePaths();
 }
 
@@ -514,9 +525,8 @@ QString SettingsDialog::findAutomatorLibInSystem()
         // Desktop
         QStandardPaths::writableLocation(QStandardPaths::DesktopLocation) + "/automator/lib/libautomator.dll",
         // Common project locations
-        "D:/Projects/automator/lib/libautomator.dll",
-        "C:/Projects/automator/lib/libautomator.dll",
-        QDir::homePath() + "/Projects/automator/lib/libautomator.dll"};
+        QDir::homePath() + "/Projects/automator/lib/libautomator.dll",
+        QDir::homePath() + "/projects/automator/lib/libautomator.dll"};
 
     // Remove empty paths and check if they exist
     possiblePaths.removeAll("");
@@ -549,9 +559,8 @@ QString SettingsDialog::findScriptsInSystem()
         QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/automator/scripts",
         QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/scripts",
         // Common project locations
-        "D:/Projects/automator/scripts",
-        "C:/Projects/automator/scripts",
-        QDir::homePath() + "/Projects/automator/scripts"};
+        QDir::homePath() + "/Projects/automator/scripts",
+        QDir::homePath() + "/projects/automator/scripts"};
 
     // Remove empty paths and check if they exist and contain scripts
     possiblePaths.removeAll("");

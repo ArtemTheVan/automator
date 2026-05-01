@@ -113,14 +113,16 @@ AutomatorWidget::~AutomatorWidget()
 
 void AutomatorWidget::loadSettings()
 {
+    // Значения по умолчанию вычисляются относительно расположения исполняемого
+    // файла, чтобы не было захардкоженных абсолютных путей вида D:/Projects/...
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QString defaultLib = QDir(appDir).absoluteFilePath("../lib/libautomator.dll");
+    const QString defaultScripts = QDir(appDir).absoluteFilePath("../scripts");
+
     m_mingwPath = m_settings->value("mingwPath", "C:/msys64/mingw64/bin").toString();
     m_opencvPath = m_settings->value("opencvPath", "C:/msys64/mingw64/bin").toString();
-    m_automatorLibPath = m_settings->value("automatorLibPath",
-                                           "D:/Projects/automator/lib/libautomator.dll")
-                             .toString();
-    m_scriptsPath = m_settings->value("scriptsPath",
-                                      "D:/Projects/automator/scripts")
-                        .toString();
+    m_automatorLibPath = m_settings->value("automatorLibPath", defaultLib).toString();
+    m_scriptsPath = m_settings->value("scriptsPath", defaultScripts).toString();
     m_pythonPath = m_settings->value("pythonPath", "python").toString();
 }
 
@@ -255,10 +257,10 @@ bool AutomatorWidget::copyWrapperToTempDir()
         sourcePaths << m_scriptsPath + "/wrapper_automator.py";
     }
 
-    // Стандартные пути
-    sourcePaths << "D:/Projects/automator/scripts/wrapper_automator.py";
+    // Пути относительно расположения exe (без захардкоженных абсолютных путей).
     sourcePaths << QCoreApplication::applicationDirPath() + "/scripts/wrapper_automator.py";
     sourcePaths << QCoreApplication::applicationDirPath() + "/../scripts/wrapper_automator.py";
+    sourcePaths << QCoreApplication::applicationDirPath() + "/../../scripts/wrapper_automator.py";
 
     for (const QString &sourcePath : sourcePaths)
     {
@@ -646,8 +648,8 @@ bool AutomatorWidget::copyDllToTempDir()
 
 QString AutomatorWidget::createSimpleTempPythonFile(const QString &script)
 {
-    // QString tempDir = QDir::tempPath();
-    QString tempDir = "D:/Projects/automator/scripts";
+    // Используем системный TEMP — никаких захардкоженных путей.
+    QString tempDir = QDir::tempPath();
     QString fileName = QString("%1/simple_python_%2.py")
                            .arg(tempDir)
                            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));

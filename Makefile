@@ -1,90 +1,122 @@
 # Главный Makefile - Управление всем проектом
+#
+# Окружение: MSYS2 (mingw64). Утилиты POSIX (rm, mkdir -p, cp).
+# Версия проекта (передаётся в C через AUTOMATOR_VERSION).
 
-# Подпроекты
+AUTOMATOR_VERSION ?= 0.2.0
+
 LIB_DIR = lib
 GUI_QT_DIR = gui-qt
 CONSOLE_DIR = console
 
-# Утилиты
-MKDIR = mkdir -p
-RM = del /Q 2>nul || true
+# Каталог установки (можно переопределить: `make install PREFIX=...`)
+PREFIX ?= /usr/local
+DESTDIR ?=
 
-# Правила по умолчанию
+export AUTOMATOR_VERSION
+
 all: lib console
 
-# Сборка библиотеки
 lib:
-	cd $(LIB_DIR) && $(MAKE) static
+	$(MAKE) -C $(LIB_DIR) static dynamic
 
-# Сборка Qt GUI (требует установленного Qt)
 qt: lib
-	@echo "Сборка Qt приложения..."
-	cd $(GUI_QT_DIR) && qmake automator.pro
-	cd $(GUI_QT_DIR) && $(MAKE)
-	@echo "Qt приложение собрано: $(GUI_QT_DIR)/automator_qt.exe"
+	@echo "Building Qt application..."
+	cd $(GUI_QT_DIR) && qmake Automator.pro
+	$(MAKE) -C $(GUI_QT_DIR)
+	@echo "Qt application built: $(GUI_QT_DIR)/automator_qt.exe"
 
-# Сборка консольной версии
 console: lib
-	cd $(CONSOLE_DIR) && $(MAKE)
+	$(MAKE) -C $(CONSOLE_DIR)
 
-# Сборка всего (библиотека + консольная версия)
 everything: lib console
-	@echo "Все компоненты собраны:"
-	@echo "  - Библиотека: $(LIB_DIR)/libautomator.a"
-	@echo "  - Консольное приложение: $(CONSOLE_DIR)/automator_console.exe"
+	@echo "All components built:"
+	@echo "  - Library:           $(LIB_DIR)/libautomator.a"
+	@echo "  - Library (DLL):     $(LIB_DIR)/libautomator.dll"
+	@echo "  - Console app:       $(CONSOLE_DIR)/automator_console.exe"
 
-# Очистка всего проекта
 clean:
-	cd $(LIB_DIR) && $(MAKE) clean
-	cd $(GUI_QT_DIR) && $(MAKE) clean 2>nul || true
-	cd $(CONSOLE_DIR) && $(MAKE) clean
-	$(RM) *.exe
-	$(RM) gui-qt/Makefile
-	$(RM) gui-qt/release gui-qt/debug
+	$(MAKE) -C $(LIB_DIR) clean
+	$(MAKE) -C $(CONSOLE_DIR) clean
+	-$(MAKE) -C $(GUI_QT_DIR) clean 2>/dev/null || true
+	@rm -rf dist
+	@rm -f $(GUI_QT_DIR)/Makefile
+	@rm -rf $(GUI_QT_DIR)/release $(GUI_QT_DIR)/debug
 
-# Запуск консольной версии
 run-console: console
-	cd $(CONSOLE_DIR) && $(MAKE) run
+	$(MAKE) -C $(CONSOLE_DIR) run
 
-# Запуск Qt версии
 run-qt: qt
 	cd $(GUI_QT_DIR) && ./automator_qt.exe
 
-# Создание дистрибутива
+# Создание дистрибутива в ./dist
 dist: clean everything
-	@echo "Создание дистрибутива..."
-	$(MKDIR) dist
-	$(MKDIR) dist/include
-	$(MKDIR) dist/lib
-	$(MKDIR) dist/bin
-	$(MKDIR) dist/examples
-	copy $(LIB_DIR)\automator.h dist\include\ 2>nul || true
-	copy $(LIB_DIR)\libautomator.a dist\lib\ 2>nul || true
-	copy $(CONSOLE_DIR)\*.exe dist\bin\ 2>nul || true
-	copy README.md dist\ 2>nul || true
-	@echo "Дистрибутив создан в папке 'dist'"
+	@echo "Creating distribution..."
+	@mkdir -p dist/include dist/lib dist/bin dist/scripts
+	cp $(LIB_DIR)/automator.h $(LIB_DIR)/keyboard.h $(LIB_DIR)/mouse.h \
+	   $(LIB_DIR)/screen.h $(LIB_DIR)/opencv.h $(LIB_DIR)/ocr.h \
+	   $(LIB_DIR)/window.h $(LIB_DIR)/log.h dist/include/
+	cp $(LIB_DIR)/libautomator.a dist/lib/ 2>/dev/null || true
+	cp $(LIB_DIR)/libautomator.dll dist/bin/ 2>/dev/null || true
+	cp $(CONSOLE_DIR)/automator_console.exe dist/bin/ 2>/dev/null || true
+	cp scripts/wrapper_automator.py dist/scripts/
+	cp README.md LICENSE dist/ 2>/dev/null || true
+	@echo "Distribution created in ./dist (version $(AUTOMATOR_VERSION))"
 
-# Проверка зависимостей
+# Установка в $(DESTDIR)$(PREFIX)
+install: everything
+	@echo "Installing to $(DESTDIR)$(PREFIX)..."
+	@mkdir -p $(DESTDIR)$(PREFIX)/bin
+	@mkdir -p $(DESTDIR)$(PREFIX)/lib
+	@mkdir -p $(DESTDIR)$(PREFIX)/include/automator
+	cp $(LIB_DIR)/libautomator.a $(DESTDIR)$(PREFIX)/lib/
+	cp $(LIB_DIR)/libautomator.dll $(DESTDIR)$(PREFIX)/bin/
+	cp $(LIB_DIR)/automator.h $(LIB_DIR)/keyboard.h $(LIB_DIR)/mouse.h \
+	   $(LIB_DIR)/screen.h $(LIB_DIR)/opencv.h $(LIB_DIR)/ocr.h \
+	   $(LIB_DIR)/window.h $(LIB_DIR)/log.h $(DESTDIR)$(PREFIX)/include/automator/
+	cp $(CONSOLE_DIR)/automator_console.exe $(DESTDIR)$(PREFIX)/bin/
+	@echo "Installation complete."
+
+uninstall:
+	@echo "Uninstalling from $(DESTDIR)$(PREFIX)..."
+	@rm -f $(DESTDIR)$(PREFIX)/lib/libautomator.a
+	@rm -f $(DESTDIR)$(PREFIX)/bin/libautomator.dll
+	@rm -f $(DESTDIR)$(PREFIX)/bin/automator_console.exe
+	@rm -rf $(DESTDIR)$(PREFIX)/include/automator
+
+# Версия и зависимости
+version:
+	@echo "Automator $(AUTOMATOR_VERSION)"
+
 check-deps:
-	@echo "Проверка зависимостей..."
-	@where gcc >nul 2>nul && echo "✓ GCC установлен" || echo "✗ GCC не найден"
-	@where qmake >nul 2>nul && echo "✓ qmake установлен" || echo "✗ qmake не найден (нужен для Qt)"
-	@where make >nul 2>nul && echo "✓ make установлен" || echo "✗ make не найден"
+	@echo "Checking dependencies..."
+	@command -v gcc >/dev/null 2>&1 && echo "[ok] gcc" || echo "[missing] gcc"
+	@command -v g++ >/dev/null 2>&1 && echo "[ok] g++" || echo "[missing] g++"
+	@command -v make >/dev/null 2>&1 && echo "[ok] make" || echo "[missing] make"
+	@command -v qmake >/dev/null 2>&1 && echo "[ok] qmake (for Qt build)" || echo "[skip] qmake (Qt build will be unavailable)"
+	@pkg-config --exists opencv4 2>/dev/null && echo "[ok] OpenCV 4" || echo "[skip] OpenCV (CV functions disabled)"
+	@command -v python >/dev/null 2>&1 && echo "[ok] python" || echo "[missing] python"
 
-# Помощь
+# Python-тесты
+test-python:
+	cd scripts && python -m pytest -v
+
 help:
-	@echo "Доступные команды:"
-	@echo "  make all         - Собрать библиотеку и консольную версию (по умолчанию)"
-	@echo "  make lib         - Только библиотеку"
-	@echo "  make qt          - Qt GUI приложение (требует qmake)"
-	@echo "  make console     - Консольное приложение"
-	@echo "  make everything  - Всё (библиотека + консольная версия)"
-	@echo "  make clean       - Очистить все собранные файлы"
-	@echo "  make run-console - Запустить консольную версию"
-	@echo "  make run-qt      - Собрать и запустить Qt версию"
-	@echo "  make dist        - Создать дистрибутив"
-	@echo "  make check-deps  - Проверить установленные зависимости"
-	@echo ""
-	@echo "Примечание: для сборки Qt версии требуется установленный Qt и qmake"
+	@echo "Targets:"
+	@echo "  make all         - Build library and console app (default)"
+	@echo "  make lib         - Build only the library"
+	@echo "  make qt          - Build Qt GUI (requires qmake)"
+	@echo "  make console     - Build console app"
+	@echo "  make everything  - Build everything"
+	@echo "  make clean       - Remove all build artifacts"
+	@echo "  make run-console - Build & run console app"
+	@echo "  make run-qt      - Build & run Qt GUI"
+	@echo "  make dist        - Create distribution in ./dist"
+	@echo "  make install     - Install to \$$DESTDIR\$$PREFIX (default /usr/local)"
+	@echo "  make uninstall   - Remove installed files"
+	@echo "  make version     - Print project version"
+	@echo "  make check-deps  - Check installed tools"
+	@echo "  make test-python - Run Python tests (pytest)"
 
-.PHONY: all lib qt console everything clean run-console run-qt dist check-deps help
+.PHONY: all lib qt console everything clean run-console run-qt dist install \
+        uninstall version check-deps help test-python

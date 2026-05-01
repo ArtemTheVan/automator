@@ -4,7 +4,8 @@
 #include <string.h>
 #include <ctype.h>
 #include "window.h"
-#include "screen.h" /* Добавляем этот include */
+#include "screen.h"
+#include "log.h"
 
 /* Вспомогательная структура для передачи данных в callback-функции */
 typedef struct
@@ -323,8 +324,8 @@ ScreenRegion get_system_tray_region_ex(void)
             region.width = rect.right - rect.left;
             region.height = rect.bottom - rect.top;
 
-            printf("Found system tray window: %dx%d at (%d,%d)\n",
-                   region.width, region.height, region.x, region.y);
+            LOG_DEBUG("Found system tray window: %dx%d at (%d,%d)",
+                      region.width, region.height, region.x, region.y);
 
             /* Увеличиваем область для лучшего захвата (если нужно) */
             int padding = 5;
@@ -382,8 +383,8 @@ ScreenRegion get_system_tray_region_ex(void)
                 region.y = rect.bottom - region.height;
             }
 
-            printf("Using taskbar for system tray: %dx%d at (%d,%d)\n",
-                   region.width, region.height, region.x, region.y);
+            LOG_DEBUG("Using taskbar for system tray: %dx%d at (%d,%d)",
+                      region.width, region.height, region.x, region.y);
 
             return region;
         }
@@ -398,8 +399,8 @@ ScreenRegion get_system_tray_region_ex(void)
     region.x = screen_width - region.width - 10;
     region.y = screen_height - region.height - 10;
 
-    printf("Using fallback for system tray: %dx%d at (%d,%d)\n",
-           region.width, region.height, region.x, region.y);
+    LOG_DEBUG("Using fallback for system tray: %dx%d at (%d,%d)",
+              region.width, region.height, region.x, region.y);
 
     return region;
 }

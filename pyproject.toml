@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["scripts/tests"]
+addopts = "-ra -q"
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"

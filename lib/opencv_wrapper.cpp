@@ -322,9 +322,11 @@ extern "C"
                region.width, region.height, region.x, region.y);
 
         // Захватываем изображение
+        char temp_dir[MAX_PATH];
         char temp_file[MAX_PATH];
-        GetTempPath(MAX_PATH, temp_file);
-        sprintf(temp_file, "%sopencv_%lu.bmp", temp_file, (unsigned long)GetCurrentProcessId());
+        GetTempPath(MAX_PATH, temp_dir);
+        snprintf(temp_file, sizeof(temp_file), "%sopencv_%lu.bmp",
+                 temp_dir, (unsigned long)GetCurrentProcessId());
 
         if (!capture_screen_region(region.x, region.y, region.width, region.height, temp_file))
         {
@@ -388,7 +390,7 @@ extern "C"
                     rectangle(numbered_image, padded_rect, Scalar(0, 255, 0), 1);
 
                     char label[20];
-                    sprintf(label, "#%d", (int)i + 1);
+                    snprintf(label, sizeof(label), "#%d", (int)i + 1);
                     putText(numbered_image, label,
                             Point(padded_rect.x + 2, padded_rect.y + 12),
                             FONT_HERSHEY_SIMPLEX, 0.4, Scalar(0, 0, 255), 1);
@@ -396,13 +398,15 @@ extern "C"
 
                 printf("TOTAL DETECTED REGIONS: %d\n", *region_count);
 
-                // Сохраняем debug изображения
+                // Сохраняем debug изображения (используем temp_dir, а не temp_file).
                 char debug_file[MAX_PATH];
-                sprintf(debug_file, "%sdebug_text_region_%lu.bmp", temp_file, (unsigned long)GetCurrentProcessId());
+                snprintf(debug_file, sizeof(debug_file), "%sdebug_text_region_%lu.bmp",
+                         temp_dir, (unsigned long)GetCurrentProcessId());
                 imwrite(debug_file, debug_image);
 
                 char numbered_file[MAX_PATH];
-                sprintf(numbered_file, "%sdebug_text_numbered_%lu.bmp", temp_file, (unsigned long)GetCurrentProcessId());
+                snprintf(numbered_file, sizeof(numbered_file), "%sdebug_text_numbered_%lu.bmp",
+                         temp_dir, (unsigned long)GetCurrentProcessId());
                 imwrite(numbered_file, numbered_image);
 
                 printf("Debug images saved:\n");
