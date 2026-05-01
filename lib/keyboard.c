@@ -2,75 +2,92 @@
 #include <stdio.h>
 #include <string.h>
 #include "keyboard.h"
+#include "log.h"
 
-// Симуляция нажатия клавиш для строки (включая спецсимволы)
+/* Задаётся в init.c, переопределяется через set_keystroke_delay_ms(). */
+extern int g_keystroke_delay_ms;
+
+/*
+ * Конвертирует один UTF-8 символ из позиции *p в кодпойнт Unicode.
+ * Возвращает количество прочитанных байт или 0 при ошибке.
+ */
+static int utf8_to_codepoint(const char *p, unsigned int *out)
+{
+    unsigned char c = (unsigned char)p[0];
+    if (c < 0x80) {
+        *out = c;
+        return 1;
+    }
+    if ((c & 0xE0) == 0xC0) {
+        if ((p[1] & 0xC0) != 0x80) return 0;
+        *out = ((c & 0x1F) << 6) | (p[1] & 0x3F);
+        return 2;
+    }
+    if ((c & 0xF0) == 0xE0) {
+        if ((p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80) return 0;
+        *out = ((c & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+        return 3;
+    }
+    if ((c & 0xF8) == 0xF0) {
+        if ((p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80 || (p[3] & 0xC0) != 0x80) return 0;
+        *out = ((c & 0x07) << 18) | ((p[1] & 0x3F) << 12)
+             | ((p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+        return 4;
+    }
+    return 0;
+}
+
+/*
+ * Отправляет один UTF-16 code unit как unicode-keystroke (down + up).
+ * Использование KEYEVENTF_UNICODE избавляет от необходимости знать раскладку
+ * и работает для произвольных символов, включая кириллицу и эмодзи.
+ */
+static void send_unicode_unit(WORD code_unit)
+{
+    INPUT inputs[2] = {0};
+
+    inputs[0].type = INPUT_KEYBOARD;
+    inputs[0].ki.wVk = 0;
+    inputs[0].ki.wScan = code_unit;
+    inputs[0].ki.dwFlags = KEYEVENTF_UNICODE;
+
+    inputs[1].type = INPUT_KEYBOARD;
+    inputs[1].ki.wVk = 0;
+    inputs[1].ki.wScan = code_unit;
+    inputs[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+
+    SendInput(2, inputs, sizeof(INPUT));
+}
+
 void simulate_keystroke(const char *text)
 {
-    printf("Simulating keystrokes for: %s\n", text);
-    for (size_t i = 0; i < strlen(text); i++)
-    {
-        char c = text[i];
-        SHORT vk = 0;
-        BOOL shift_needed = FALSE;
-        // Определяем виртуальный код клавиши и необходимость в Shift
-        if (c >= 'a' && c <= 'z')
-        {
-            vk = 0x41 + (c - 'a'); // 0x41 = 'A', строчные без Shift
+    if (!text) return;
+    LOG_DEBUG("Simulating keystrokes for: %s", text);
+
+    const char *p = text;
+    while (*p) {
+        unsigned int cp = 0;
+        int consumed = utf8_to_codepoint(p, &cp);
+        if (consumed == 0) {
+            LOG_WARN("Invalid UTF-8 byte 0x%02x — skipping", (unsigned char)*p);
+            p++;
+            continue;
         }
-        else if (c >= 'A' && c <= 'Z')
-        {
-            vk = 0x41 + (c - 'A'); // Заглавные требуют Shift
-            shift_needed = TRUE;
+        p += consumed;
+
+        /* BMP (≤ U+FFFF) — один code unit; иначе суррогатная пара. */
+        if (cp <= 0xFFFF) {
+            send_unicode_unit((WORD)cp);
+        } else {
+            unsigned int v = cp - 0x10000;
+            WORD high = (WORD)(0xD800 + (v >> 10));
+            WORD low  = (WORD)(0xDC00 + (v & 0x3FF));
+            send_unicode_unit(high);
+            send_unicode_unit(low);
         }
-        else if (c >= '0' && c <= '9')
-        {
-            vk = 0x30 + (c - '0'); // 0x30 = '0', цифры без Shift
+
+        if (g_keystroke_delay_ms > 0) {
+            Sleep(g_keystroke_delay_ms);
         }
-        else
-        {
-            // Обработка специальных символов
-            switch (c)
-            {
-            case '!':
-                vk = 0x31; // Клавиша '1'
-                shift_needed = TRUE;
-                break;
-            case '@':
-                vk = 0x32; // Клавиша '2'
-                shift_needed = TRUE;
-                break;
-            case ' ':
-                vk = VK_SPACE;
-                break;
-            default:
-                // Если символ не поддерживается, пропустить
-                continue;
-            }
-        }
-        // Нажатие Shift, если требуется
-        if (shift_needed)
-        {
-            INPUT shift_down = {0};
-            shift_down.type = INPUT_KEYBOARD;
-            shift_down.ki.wVk = VK_SHIFT;
-            SendInput(1, &shift_down, sizeof(INPUT));
-        }
-        // Нажатие и отпускание основной клавиши
-        INPUT key_event = {0};
-        key_event.type = INPUT_KEYBOARD;
-        key_event.ki.wVk = vk;
-        SendInput(1, &key_event, sizeof(INPUT));
-        key_event.ki.dwFlags = KEYEVENTF_KEYUP;
-        SendInput(1, &key_event, sizeof(INPUT));
-        // Отпускание Shift, если нажимали
-        if (shift_needed)
-        {
-            INPUT shift_up = {0};
-            shift_up.type = INPUT_KEYBOARD;
-            shift_up.ki.wVk = VK_SHIFT;
-            shift_up.ki.dwFlags = KEYEVENTF_KEYUP;
-            SendInput(1, &shift_up, sizeof(INPUT));
-        }
-        Sleep(10); // Короткая пауза между символами
     }
 }

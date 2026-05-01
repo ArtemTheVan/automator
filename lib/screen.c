@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "screen.h"
+#include "log.h"
 
 /* Вспомогательные функции */
 static HBITMAP create_bitmap_from_region(int x, int y, int width, int height)

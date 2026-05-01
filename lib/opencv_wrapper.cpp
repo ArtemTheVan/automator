@@ -2,13 +2,17 @@
 #include <string.h>
 #include <stdlib.h>
 #include <windows.h>
+
+#include "automator.h"
+#include "log.h"
+
+#ifdef HAVE_OPENCV
+
 #include <vector>
 #include <algorithm>
 #include <cmath>
 #include <numeric>
 #include <set>
-
-#include "automator.h"
 
 // Подключаем OpenCV
 #include <opencv2/opencv.hpp>
@@ -271,17 +275,15 @@ extern "C"
 
     AUTOMATOR_API int opencv_init(void)
     {
-        printf("OpenCV Text Detection v23.0 (Maximum Detection)\n");
-        printf("Config: min_size=%dx%d, max_size=%dx%d\n",
-               config.min_width, config.min_height,
-               config.max_width, config.max_height);
-        printf("Using maximum detection - finding all possible regions\n");
+        LOG_INFO("OpenCV Text Detection initialized (config: min=%dx%d, max=%dx%d)",
+                 config.min_width, config.min_height,
+                 config.max_width, config.max_height);
         return 1;
     }
 
     AUTOMATOR_API void opencv_cleanup(void)
     {
-        printf("OpenCV module cleaned up\n");
+        LOG_DEBUG("OpenCV module cleaned up");
     }
 
     AUTOMATOR_API DetectedRegion detect_system_tray_region_opencv(void)
@@ -488,3 +490,44 @@ extern "C"
     }
 
 } // extern "C"
+
+#else /* !HAVE_OPENCV */
+
+/*
+ * Заглушки на случай, когда OpenCV недоступен в сборке.
+ * Они нужны, чтобы DLL экспортировала тот же набор функций
+ * и вызывающий код компилировался без условной компиляции.
+ */
+extern "C" {
+
+AUTOMATOR_API int opencv_init(void)
+{
+    LOG_WARN("OpenCV support not compiled in (build with HAVE_OPENCV=1)");
+    return 0;
+}
+
+AUTOMATOR_API void opencv_cleanup(void) {}
+
+AUTOMATOR_API DetectedRegion detect_system_tray_region_opencv(void)
+{
+    DetectedRegion r = {0, 0, 0, 0, 0.0f};
+    return r;
+}
+
+AUTOMATOR_API DetectedRegion *find_text_regions_in_tray(ScreenRegion region, int *region_count)
+{
+    (void)region;
+    if (region_count) *region_count = 0;
+    return NULL;
+}
+
+AUTOMATOR_API DetectedRegion find_keyboard_layout_in_region(ScreenRegion region)
+{
+    (void)region;
+    DetectedRegion r = {0, 0, 0, 0, 0.0f};
+    return r;
+}
+
+} // extern "C"
+
+#endif /* HAVE_OPENCV */
