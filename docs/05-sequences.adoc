@@ -3,7 +3,11 @@
 В разделе приведены sequence-диаграммы трёх ключевых сценариев: эмуляция клавиатурного
 ввода, полный конвейер OCR и запуск пользовательского сценария из Qt-редактора.
 
-=== Эмуляция клавиатурного ввода
+=== Эмуляция клавиатурного ввода (UTF-8 / Unicode)
+
+С использованием `KEYEVENTF_UNICODE` ввод не зависит от текущей раскладки и
+поддерживает любые символы Unicode (включая кириллицу и эмодзи через суррогатные
+пары для кодпойнтов > U+FFFF).
 
 [plantuml, seq-keystroke, svg]
 ----
@@ -15,30 +19,33 @@ participant "libautomator.dll\nkeyboard.c" as lib
 participant "WinAPI\nSendInput" as win
 participant "Активное\nокно" as app
 
-user -> wrap : automator.keystroke("Hi!")
+user -> wrap : automator.keystroke("Привет 👋")
 wrap -> wrap : text.encode("utf-8")
-wrap -> lib : simulate_keystroke(text)
+wrap -> lib : simulate_keystroke(utf8_bytes)
 
-loop для каждого символа
-    lib -> lib : выбор VK-кода\nи флага Shift
-    alt нужен Shift
-        lib -> win : INPUT (VK_SHIFT down)
+loop для каждого UTF-8 символа
+    lib -> lib : utf8_to_codepoint(p)
+    alt cp ≤ U+FFFF (BMP)
+        lib -> win : INPUT (KEYEVENTF_UNICODE, wScan=cp, down)
+        win -> app : событие ввода
+        lib -> win : INPUT (KEYEVENTF_UNICODE, wScan=cp, up)
+    else cp > U+FFFF (вне BMP)
+        lib -> lib : разбиение на\nсуррогатную пару high/low
+        lib -> win : INPUT high (down + up)
+        lib -> win : INPUT low  (down + up)
         win -> app : событие ввода
     end
-    lib -> win : INPUT (VK key down)
-    win -> app : событие ввода
-    lib -> win : INPUT (VK key up)
-    alt нужен Shift
-        lib -> win : INPUT (VK_SHIFT up)
-    end
-    lib -> lib : Sleep(10)
+    lib -> lib : Sleep(g_keystroke_delay_ms)
 end
 @enduml
 ----
 
 === Полный конвейер OCR системного трея
 
-Сценарий `automator_console.exe` без аргументов или вызов из Python.
+Сценарий `automator_console.exe` без аргументов. Tesseract вызывается через
+`CreateProcess` с массивом аргументов (без `system()` / shell), а путь к
+`tesseract.exe` берётся из `ocr_set_tesseract_path()` → переменной окружения
+`TESSERACT_EXE` → стандартных мест установки.
 
 [plantuml, seq-ocr-pipeline, svg]
 ----
@@ -48,36 +55,44 @@ participant "main.c" as main
 participant "opencv_wrapper" as ocv
 participant "screen.c" as scr
 participant "ocr.c" as ocr
-participant "Tesseract\nCLI" as tess
+participant "WinAPI\nCreateProcess" as cp
+participant "tesseract.exe\n(дочерний процесс)" as tess
 database "BMP/TXT\nфайлы" as fs
 
-main -> ocv : opencv_init()
-main -> ocv : detect_system_tray_region_opencv()
-ocv -> scr : capture_to_bitmap(весь экран)
-scr --> ocv : HBITMAP
-ocv --> main : DetectedRegion трея
+main -> main : automator_init()\n(DPI awareness)
+main -> ocv  : opencv_init()
+main -> ocv  : detect_system_tray_region_opencv()
+ocv  -> scr  : capture_to_bitmap(весь экран)
+scr  --> ocv : HBITMAP
+ocv  --> main : DetectedRegion трея
 
-main -> scr : capture_screen_region(тr, "debug_full_tray.bmp")
-scr -> fs : запись BMP
+main -> scr  : capture_screen_region(tr, "debug_full_tray.bmp")
+scr  -> fs   : запись BMP
 
-main -> ocv : find_text_regions_in_tray(tray)
-ocv --> main : массив DetectedRegion[N]
+main -> ocv  : find_text_regions_in_tray(tray)
+ocv  --> main : DetectedRegion[N]
 
-main -> ocr : ocr_init(NULL)
+main -> ocr  : ocr_init(NULL)
+ocr  -> ocr  : discover_tesseract_path()\n(env > defaults)
+ocr  --> main : OCR_SUCCESS
 
 loop для каждого региона
-    main -> scr : capture_screen_region(rgn, "tmp.bmp")
-    scr -> fs : запись BMP
+    main -> scr  : capture_screen_region(rgn, "tmp.bmp")
+    scr  -> fs   : запись BMP
 
     loop стратегии (eng, rus, eng+rus)
         main -> ocr : ocr_from_file("tmp.bmp", lang, psm=7, dpi=300)
-        ocr -> tess : system("tesseract.exe ...")
-        tess -> fs : запись output.txt
-        ocr -> fs : чтение output.txt
-        ocr -> ocr : trim → utf8→cp1251 → clean\n→ calculate_confidence()
-        ocr --> main : OCRResult
+        ocr  -> ocr : append_quoted() для каждого\nаргумента (anti-injection)
+        ocr  -> cp  : CreateProcessA(tesseract.exe,\ncmdline, env+TESSDATA_PREFIX)
+        cp   -> tess : запуск
+        tess -> fs   : запись <output>.txt
+        cp   --> ocr : exit_code
+        ocr  -> fs   : чтение <output>.txt
+        ocr  -> fs   : remove(<output>.txt)
+        ocr  -> ocr  : trim → utf8_to_cp1251\n(MultiByteToWideChar)\n→ clean → confidence
+        ocr  --> main : OCRResult
     end
-    main -> main : выбор лучшего\nрезультата (+бонус за пунктуацию)
+    main -> main : выбор лучшего\n(+бонус за пунктуацию)
 end
 
 main -> ocr : ocr_cleanup()
@@ -85,7 +100,21 @@ main -> ocv : opencv_cleanup()
 @enduml
 ----
 
+[NOTE]
+====
+Накладные расходы запуска `tesseract.exe` для каждой пары (регион × язык)
+значительны: 3 региона × 3 языка = 9 запусков процесса. Дальнейший шаг —
+миграция на C API libtesseract; это устранит зависимость от внешнего
+exe и даст значительный выигрыш по скорости.
+====
+
 === Запуск сценария из Qt-редактора
+
+`AutomatorWidget` создаёт во временном каталоге Python-файл, формирует `PATH`
+с MinGW впереди и запускает `python.exe` через `QProcess`. Python-обёртка
+ищет `libautomator.dll` рядом с `wrapper_automator.py` (или по
+`AUTOMATOR_DLL_PATH`), `%TEMP%` намеренно не сканируется (защита от
+DLL hijacking).
 
 [plantuml, seq-qt-run, svg]
 ----
@@ -98,30 +127,31 @@ participant "Python.exe" as py
 participant "wrapper_\nautomator.py" as wrap
 participant "libautomator.dll" as lib
 
-user -> gui : нажатие "Start"
-gui -> gui : copyWrapperToTempDir()
-gui -> gui : copyDllToTempDir()
-gui -> gui : copyMingwDependenciesToTempDir()
-gui -> gui : createTempPythonFile(script)
-gui -> gui : buildEnvironmentPath()
-gui -> proc : start(python.exe, [tempScript])
+user -> gui  : нажатие "Start"
+gui  -> gui  : createSimpleTempPythonFile(script)\n(в QDir::tempPath())
+gui  -> gui  : buildEnvironmentPath()\n(MinGW + libDir + системный PATH)
+gui  -> proc : setProcessEnvironment(env)
+gui  -> proc : start(python.exe, [-X utf8, tempScript])
 
-proc -> py : запуск
-py -> wrap : import wrapper_automator
-wrap -> lib : ctypes.CDLL("libautomator.dll")
-lib --> wrap : handle
+proc -> py   : запуск
+py   -> wrap : import wrapper_automator
+wrap -> wrap : _candidate_dll_paths(...)\n(explicit > AUTOMATOR_DLL_PATH > ./../lib > здесь > PATH)
+wrap -> wrap : os.add_dll_directory(каталог DLL)
+wrap -> lib  : ctypes.CDLL(path)
+lib  --> wrap : handle
 
 loop команды сценария
     wrap -> lib : simulate_keystroke / mouse / capture
-    lib --> wrap : результат
+    lib  --> wrap : результат
 end
 
-py -> proc : stdout / stderr
-proc -> gui : onScriptOutput()
-gui -> gui : append в QTextBrowser
+py   -> proc : stdout / stderr (UTF-8)
+proc -> gui  : readyReadStandardOutput
+gui  -> gui  : append в QTextBrowser
 
-py -> proc : exit(code)
-proc -> gui : onScriptFinished(code, status)
-gui -> user : индикатор завершения
+py   -> proc : exit(code)
+proc -> gui  : onScriptFinished(code, status)
+gui  -> gui  : cleanupTempFile()
+gui  -> user : индикатор завершения
 @enduml
 ----

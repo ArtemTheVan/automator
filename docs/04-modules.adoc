@@ -1,5 +1,44 @@
 == Описание программных модулей
 
+=== Модуль `lib/init` — инициализация и общее состояние
+
+[cols="1,3"]
+|===
+| Файлы           | `lib/init.c`, `lib/automator.h`
+| Зависимости     | `windows.h` (`SetProcessDpiAwarenessContext` и т.п.)
+|===
+
+Включает per-monitor DPI awareness (Windows 10 1703+ → fallback на shcore →
+fallback на legacy `SetProcessDPIAware`) и хранит общее состояние библиотеки
+(задержки клавиатуры/мыши).
+
+[source,c]
+----
+AUTOMATOR_API const char *automator_version(void);
+AUTOMATOR_API int  automator_init(void);
+AUTOMATOR_API void set_keystroke_delay_ms(int ms);
+AUTOMATOR_API void set_mouse_delay_ms(int ms);
+----
+
+Рекомендуется вызывать `automator_init()` один раз в начале программы.
+
+=== Модуль `lib/log` — логирование
+
+[cols="1,3"]
+|===
+| Файлы | `lib/log.h`
+|===
+
+Заголовочный файл с макросами `LOG_DEBUG/INFO/WARN/ERROR`. Уровень управляется
+макросом `AUTOMATOR_LOG_LEVEL` во время сборки (по умолчанию `INFO` в Debug
+и `WARN` в Release).
+
+[source,c]
+----
+LOG_INFO("Tesseract: %s", path);
+LOG_ERROR("CreateProcess failed: %lu", GetLastError());
+----
+
 === Модуль `lib/keyboard` — эмуляция клавиатуры
 
 [cols="1,3"]
@@ -9,23 +48,20 @@
 | Экспорт         | `KEYBOARD_API` (`__declspec(dllexport)` при сборке DLL)
 |===
 
-Модуль преобразует строку символов в последовательность событий `INPUT` структуры
-WinAPI и отправляет её через `SendInput`. Заглавные буквы и часть знаков пунктуации
-(например, `!`, `@`) набираются с автоматическим зажатием клавиши Shift. Между событиями
-выдерживается пауза в 10 мс.
+Модуль декодирует входную строку из UTF-8 в кодпойнты Unicode и отправляет каждый
+символ как unicode-keystroke (`KEYEVENTF_UNICODE`) через `SendInput`. Этот подход
+работает для произвольных символов независимо от текущей раскладки клавиатуры —
+в том числе для кириллицы и эмодзи (через суррогатные пары для символов вне BMP).
 
-Ограничения текущей реализации:
-
-* поддерживается ASCII-подмножество (`A`–`Z`, `a`–`z`, `0`–`9`, пробел, `!`, `@`); прочие
-  специальные символы пропускаются;
-* кириллица из C-уровня не вводится напрямую — для UTF-8 используйте Python-обёртку,
-  которая кодирует строку и передаёт её, либо расширьте таблицу VK-кодов.
+Между нажатиями выдерживается пауза, настраиваемая через `set_keystroke_delay_ms()`
+(по умолчанию 10 мс).
 
 API:
 
 [source,c]
 ----
-KEYBOARD_API void simulate_keystroke(const char *text);
+KEYBOARD_API void simulate_keystroke(const char *text);   /* UTF-8 */
+AUTOMATOR_API void set_keystroke_delay_ms(int ms);
 ----
 
 === Модуль `lib/mouse` — эмуляция мыши
@@ -37,8 +73,12 @@ KEYBOARD_API void simulate_keystroke(const char *text);
 |===
 
 Модуль работает с последовательностями `MouseAction`. Координаты `(x, y)` со значением
-`-1` означают «не двигать мышь». Для перемещения координаты пересчитываются в абсолютные
-значения 0–65535, как требует `MOUSEEVENTF_ABSOLUTE`.
+`-1` означают «не двигать мышь». Для перемещения координаты пересчитываются в систему
+координат виртуального экрана (0–65535) с флагом `MOUSEEVENTF_VIRTUALDESK` — это
+обеспечивает корректную работу с мульти-мониторными конфигурациями.
+
+Между событиями выдерживается пауза, настраиваемая через `set_mouse_delay_ms()` (по
+умолчанию 50 мс).
 
 [source,c]
 ----

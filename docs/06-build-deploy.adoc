@@ -24,8 +24,12 @@
 | `make run-console` | Сборка и запуск консольной версии.
 | `make run-qt`      | Сборка и запуск Qt-версии.
 | `make dist`        | Создание дистрибутива в каталоге `dist/`.
+| `make install`     | Установка в `$DESTDIR$PREFIX` (по умолчанию `/usr/local`).
+| `make uninstall`   | Удаление установленных файлов.
+| `make version`     | Печать версии проекта.
 | `make clean`       | Полная очистка артефактов сборки.
 | `make check-deps`  | Проверка установленного инструментария.
+| `make test-python` | Запуск Python-тестов (pytest).
 |===
 
 === Граф сборки
