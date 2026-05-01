@@ -33,7 +33,11 @@
       "Bash(taskkill:*)",
       "Bash(npm run build:*)",
       "Bash(echo:*)",
-      "Bash(dir /B d:\\\\ClaudeProjects\\\\automator)"
+      "Bash(dir /B d:\\\\ClaudeProjects\\\\automator)",
+      "Bash(git -C d:/ClaudeProjects/automator rm console/main_old.c)",
+      "Bash(python -m pytest scripts/tests -v)",
+      "Bash(python -m pip install pytest --quiet)",
+      "Bash(python -m pytest scripts/tests -q)"
     ]
   },
   "model": "opus"
