@@ -1,0 +1,170 @@
+== Архитектура
+
+=== Уровни архитектуры
+
+Проект имеет трёхуровневую архитектуру: ядро (нативная библиотека), приложения
+(консоль + GUI) и слой сценариев (Python).
+
+[plantuml, architecture-layers, svg]
+----
+@startuml
+skinparam shadowing false
+skinparam rectangle {
+  BackgroundColor #F5F7FA
+  BorderColor #4A5568
+  RoundCorner 8
+}
+skinparam ArrowColor #2D3748
+
+rectangle "Уровень сценариев\n(Python)" as L1 {
+  component "scripts/*.py" as scripts
+  component "wrapper_automator.py\n(ctypes-обёртка)" as wrap
+}
+
+rectangle "Уровень приложений" as L2 {
+  component "automator_console.exe" as cons
+  component "automator_qt.exe\n(Qt-редактор)" as qt
+}
+
+rectangle "Уровень ядра\n(нативная библиотека)" as L3 {
+  component "libautomator\n(.a / .dll)" as lib
+}
+
+rectangle "Платформа Windows" as L0 {
+  component "WinAPI\n(user32, gdi32)" as winapi
+  component "OpenCV 4" as ocv
+  component "Tesseract OCR" as tess
+}
+
+scripts --> wrap
+wrap --> lib : ctypes\nCDLL
+qt --> lib : C ABI
+cons --> lib : C ABI
+lib --> winapi
+lib --> ocv
+lib --> tess : system()\nCLI
+@enduml
+----
+
+=== Компонентная диаграмма
+
+Диаграмма показывает крупные компоненты и направления зависимостей.
+
+[plantuml, components, svg]
+----
+@startuml
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "lib (libautomator)" {
+  [keyboard]
+  [mouse]
+  [screen]
+  [window]
+  [ocr]
+  [opencv_wrapper] as ocv
+  interface "automator.h" as api
+}
+
+package "console" {
+  [main.c] as cmain
+}
+
+package "gui-qt" {
+  [AutomatorWidget] as aw
+  [SettingsDialog] as sd
+}
+
+package "scripts" {
+  [wrapper_automator.py] as wrapper
+  [simple_demo.py]
+  [test_automator.py]
+  [user_script.py]
+}
+
+api -- keyboard
+api -- mouse
+api -- screen
+api -- window
+api -- ocr
+api -- ocv
+
+cmain ..> api
+aw ..> sd
+wrapper ..> api : ctypes.CDLL\nlibautomator.dll
+[simple_demo.py] ..> wrapper
+[test_automator.py] ..> wrapper
+[user_script.py] ..> wrapper
+
+aw ..> wrapper : запуск\nQProcess
+@enduml
+----
+
+=== Схема деления на компоненты
+
+Деление проекта на физические каталоги соответствует логическому разделению ответственности.
+
+[plantuml, packages, svg]
+----
+@startuml
+skinparam packageStyle rectangle
+skinparam shadowing false
+
+package "automator/" {
+  package "lib/" as lib {
+    file "automator.h" as h_api
+    file "keyboard.{c,h}"
+    file "mouse.{c,h}"
+    file "screen.{c,h}"
+    file "ocr.{c,h}"
+    file "opencv.h"
+    file "opencv_wrapper.cpp"
+    file "window.{c,h}"
+    file "Makefile" as lib_mk
+  }
+
+  package "console/" as cons {
+    file "main.c"
+    file "Makefile" as cons_mk
+  }
+
+  package "gui-qt/" as gui {
+    file "Automator.pro"
+    file "main.cpp"
+    file "automatorwidget.{cpp,h}"
+    file "settingsdialog.{cpp,h}"
+    folder "icons/"
+  }
+
+  package "scripts/" as scr {
+    file "wrapper_automator.py"
+    file "simple_demo.py"
+    file "qt_example_script.py"
+    file "user_script.py"
+    file "test_automator.py"
+    file "test_python_script.py"
+  }
+
+  package "docs/" as docs {
+    file "project.adoc"
+    file "01-overview.adoc"
+    file "02-quickstart.adoc"
+    file "03-architecture.adoc"
+    file "04-modules.adoc"
+    file "05-sequences.adoc"
+    file "06-build-deploy.adoc"
+    file "07-reference.adoc"
+  }
+
+  file "Makefile" as root_mk
+  file "README.md"
+}
+
+root_mk ..> lib_mk
+root_mk ..> cons_mk
+root_mk ..> gui : qmake
+cons ..> lib
+gui  ..> lib
+scr  ..> lib : runtime\nctypes
+@enduml
+----

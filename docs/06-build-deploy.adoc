@@ -1,0 +1,105 @@
+== Сборка проекта
+
+=== Зависимости
+
+* GCC / MinGW-w64 (рекомендуется MSYS2 `mingw64`).
+* GNU Make.
+* Qt 5 или 6 + `qmake` — только для GUI-редактора.
+* OpenCV 4 (`pkg-config opencv4`) — опционально, для функций компьютерного зрения.
+* Tesseract OCR + `tessdata` — опционально, для функций OCR.
+* CPython 3.x — для запуска Python-сценариев.
+
+Проверка установленного инструментария: `make check-deps`.
+
+=== Цели корневого Makefile
+
+[cols="1,3", options="header"]
+|===
+| Цель             | Действие
+| `make all`         | Библиотека + консольное приложение (по умолчанию).
+| `make lib`         | Только статическая библиотека `lib/libautomator.a`.
+| `make qt`          | GUI-редактор `gui-qt/automator_qt.exe` (требует `qmake`).
+| `make console`     | Консольное приложение `console/automator_console.exe`.
+| `make everything`  | Библиотека и консольное приложение целиком.
+| `make run-console` | Сборка и запуск консольной версии.
+| `make run-qt`      | Сборка и запуск Qt-версии.
+| `make dist`        | Создание дистрибутива в каталоге `dist/`.
+| `make clean`       | Полная очистка артефактов сборки.
+| `make check-deps`  | Проверка установленного инструментария.
+|===
+
+=== Граф сборки
+
+[plantuml, build-graph, svg]
+----
+@startuml
+skinparam shadowing false
+skinparam ArrowColor #2D3748
+
+artifact "automator.h"           as hdr
+artifact "*.c / *.cpp\n(lib)"     as src
+artifact "libautomator.a"        as static
+artifact "libautomator.dll"      as dyn
+artifact "automator_console.exe" as cons
+artifact "automator_qt.exe"      as qt
+artifact "dist/"                 as dist
+
+src --> static : ar rcs
+src --> dyn    : g++ -shared
+hdr --> static
+hdr --> dyn
+
+static --> cons : gcc + console/main.c
+dyn    --> cons : runtime
+dyn    --> qt   : C ABI + qmake
+hdr    --> qt
+
+static --> dist
+dyn    --> dist
+cons   --> dist
+hdr    --> dist
+@enduml
+----
+
+
+== Развёртывание
+
+Минимальная и расширенная конфигурации развёртывания на целевой машине под Windows.
+
+[plantuml, deployment, svg]
+----
+@startuml
+skinparam shadowing false
+
+node "Целевой ПК\n(Windows 10+)" {
+
+  artifact "automator.dll"
+  artifact "libgcc_s_seh-1.dll"
+  artifact "libstdc++-6.dll"
+  artifact "libwinpthread-1.dll"
+  artifact "automator_console.exe"
+  artifact "automator_qt.exe"
+  artifact "Qt5/6 runtime DLLs"
+
+  node "Python 3.x" {
+    artifact "wrapper_automator.py"
+    artifact "user_script.py"
+  }
+
+  node "C:\\Program Files\\Tesseract-OCR" {
+    artifact "tesseract.exe"
+    folder   "tessdata"
+  }
+
+  node "MSYS2 mingw64" {
+    artifact "OpenCV 4 DLLs"
+  }
+}
+
+[automator_console.exe] ..> [automator.dll]
+[automator_qt.exe]      ..> [automator.dll]
+[wrapper_automator.py]  ..> [automator.dll] : ctypes
+[automator.dll]         ..> [tesseract.exe] : system()
+[automator.dll]         ..> [OpenCV 4 DLLs]
+@enduml
+----

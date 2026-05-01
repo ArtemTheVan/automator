@@ -1,0 +1,127 @@
+== Сценарии работы
+
+В разделе приведены sequence-диаграммы трёх ключевых сценариев: эмуляция клавиатурного
+ввода, полный конвейер OCR и запуск пользовательского сценария из Qt-редактора.
+
+=== Эмуляция клавиатурного ввода
+
+[plantuml, seq-keystroke, svg]
+----
+@startuml
+skinparam shadowing false
+actor "Скрипт" as user
+participant "Automator\n(Python)" as wrap
+participant "libautomator.dll\nkeyboard.c" as lib
+participant "WinAPI\nSendInput" as win
+participant "Активное\nокно" as app
+
+user -> wrap : automator.keystroke("Hi!")
+wrap -> wrap : text.encode("utf-8")
+wrap -> lib : simulate_keystroke(text)
+
+loop для каждого символа
+    lib -> lib : выбор VK-кода\nи флага Shift
+    alt нужен Shift
+        lib -> win : INPUT (VK_SHIFT down)
+        win -> app : событие ввода
+    end
+    lib -> win : INPUT (VK key down)
+    win -> app : событие ввода
+    lib -> win : INPUT (VK key up)
+    alt нужен Shift
+        lib -> win : INPUT (VK_SHIFT up)
+    end
+    lib -> lib : Sleep(10)
+end
+@enduml
+----
+
+=== Полный конвейер OCR системного трея
+
+Сценарий `automator_console.exe` без аргументов или вызов из Python.
+
+[plantuml, seq-ocr-pipeline, svg]
+----
+@startuml
+skinparam shadowing false
+participant "main.c" as main
+participant "opencv_wrapper" as ocv
+participant "screen.c" as scr
+participant "ocr.c" as ocr
+participant "Tesseract\nCLI" as tess
+database "BMP/TXT\nфайлы" as fs
+
+main -> ocv : opencv_init()
+main -> ocv : detect_system_tray_region_opencv()
+ocv -> scr : capture_to_bitmap(весь экран)
+scr --> ocv : HBITMAP
+ocv --> main : DetectedRegion трея
+
+main -> scr : capture_screen_region(тr, "debug_full_tray.bmp")
+scr -> fs : запись BMP
+
+main -> ocv : find_text_regions_in_tray(tray)
+ocv --> main : массив DetectedRegion[N]
+
+main -> ocr : ocr_init(NULL)
+
+loop для каждого региона
+    main -> scr : capture_screen_region(rgn, "tmp.bmp")
+    scr -> fs : запись BMP
+
+    loop стратегии (eng, rus, eng+rus)
+        main -> ocr : ocr_from_file("tmp.bmp", lang, psm=7, dpi=300)
+        ocr -> tess : system("tesseract.exe ...")
+        tess -> fs : запись output.txt
+        ocr -> fs : чтение output.txt
+        ocr -> ocr : trim → utf8→cp1251 → clean\n→ calculate_confidence()
+        ocr --> main : OCRResult
+    end
+    main -> main : выбор лучшего\nрезультата (+бонус за пунктуацию)
+end
+
+main -> ocr : ocr_cleanup()
+main -> ocv : opencv_cleanup()
+@enduml
+----
+
+=== Запуск сценария из Qt-редактора
+
+[plantuml, seq-qt-run, svg]
+----
+@startuml
+skinparam shadowing false
+actor Пользователь as user
+participant "AutomatorWidget" as gui
+participant "QProcess" as proc
+participant "Python.exe" as py
+participant "wrapper_\nautomator.py" as wrap
+participant "libautomator.dll" as lib
+
+user -> gui : нажатие "Start"
+gui -> gui : copyWrapperToTempDir()
+gui -> gui : copyDllToTempDir()
+gui -> gui : copyMingwDependenciesToTempDir()
+gui -> gui : createTempPythonFile(script)
+gui -> gui : buildEnvironmentPath()
+gui -> proc : start(python.exe, [tempScript])
+
+proc -> py : запуск
+py -> wrap : import wrapper_automator
+wrap -> lib : ctypes.CDLL("libautomator.dll")
+lib --> wrap : handle
+
+loop команды сценария
+    wrap -> lib : simulate_keystroke / mouse / capture
+    lib --> wrap : результат
+end
+
+py -> proc : stdout / stderr
+proc -> gui : onScriptOutput()
+gui -> gui : append в QTextBrowser
+
+py -> proc : exit(code)
+proc -> gui : onScriptFinished(code, status)
+gui -> user : индикатор завершения
+@enduml
+----

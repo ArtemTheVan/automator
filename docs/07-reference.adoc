@@ -1,0 +1,91 @@
+== Структура репозитория
+
+[source]
+----
+automator/
+├── Makefile                    # Корневой Makefile
+├── README.md
+├── lib/                        # Ядро — libautomator
+│   ├── automator.h             # Публичный API
+│   ├── keyboard.{c,h}
+│   ├── mouse.{c,h}
+│   ├── screen.{c,h}
+│   ├── ocr.{c,h}
+│   ├── opencv.h
+│   ├── opencv_wrapper.cpp
+│   ├── window.{c,h}
+│   └── Makefile
+├── console/                    # automator_console.exe
+│   ├── main.c
+│   └── Makefile
+├── gui-qt/                     # automator_qt.exe (Qt)
+│   ├── Automator.pro
+│   ├── main.cpp
+│   ├── automatorwidget.{cpp,h}
+│   ├── settingsdialog.{cpp,h}
+│   ├── automator_qt_resource.rc
+│   └── icons/                  # load.png, play.png, record.png, save.png, stop.png
+├── scripts/                    # Python-обёртка и демо
+│   ├── wrapper_automator.py
+│   ├── simple_demo.py
+│   ├── qt_example_script.py
+│   ├── user_script.py
+│   ├── test_automator.py
+│   └── test_python_script.py
+└── docs/                       # Документация (AsciiDoc, разделена по разделам)
+    ├── project.adoc            # Корневой документ с include
+    ├── 01-overview.adoc
+    ├── 02-quickstart.adoc
+    ├── 03-architecture.adoc
+    ├── 04-modules.adoc
+    ├── 05-sequences.adoc
+    ├── 06-build-deploy.adoc
+    └── 07-reference.adoc
+----
+
+
+== Платформа и ограничения
+
+* Целевая ОС — *Windows 10* и новее (`_WIN32_WINNT=0x0A00`).
+* Сборка ориентирована на MinGW-w64; MSVC не тестировался.
+* Функции OpenCV/OCR опциональны; при их отсутствии библиотека собирается без них и
+  предоставляет только эмуляцию ввода и захват экрана.
+* `simulate_keystroke` поддерживает базовое ASCII-подмножество; для UTF-8 используйте
+  Python-обёртку или расширьте таблицу VK-кодов.
+* OCR вызывает `tesseract.exe` через `system()` и ожидает фиксированный путь установки
+  `C:\Program Files\Tesseract-OCR\tesseract.exe`.
+* GUI собирается со статической линковкой `libgcc`/`libstdc++` для упрощения дистрибуции.
+
+
+== Сборка документа
+
+Документ написан в формате AsciiDoc, разбит на тематические файлы и подключается через
+директивы `include::`. Диаграммы PlantUML рендерятся расширением `asciidoctor-diagram`.
+
+[source,bash]
+----
+# Установить инструменты
+gem install asciidoctor asciidoctor-diagram
+
+# Сгенерировать единый HTML с диаграммами
+asciidoctor -r asciidoctor-diagram docs/project.adoc
+
+# Или PDF
+asciidoctor-pdf -r asciidoctor-diagram docs/project.adoc
+----
+
+Для рендеринга PlantUML требуется установленный `plantuml.jar` или сетевой сервис
+PlantUML.
+
+При необходимости каждый файл `NN-*.adoc` можно собрать отдельно, добавив в его начало
+заголовок документа и нужные атрибуты:
+
+[source,asciidoc]
+----
+= Заголовок раздела
+:toc:
+:source-highlighter: rouge
+:plantuml-format: svg
+
+include::02-quickstart.adoc[]
+----

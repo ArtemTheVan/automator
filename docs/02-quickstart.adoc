@@ -1,0 +1,153 @@
+== Быстрый старт
+
+Этот раздел проведёт за 5 минут от чистой системы до первого сценария автоматизации.
+
+=== Минимальные требования
+
+[cols="1,3", options="header"]
+|===
+| Компонент      | Что нужно
+
+| ОС             | Windows 10 / 11 (x64).
+| Toolchain      | MSYS2 c пакетами `mingw-w64-x86_64-gcc` и `make`.
+| Python         | CPython 3.8+ (для сценариев).
+| Tesseract OCR  | Только для функций OCR. Стандартный путь установки: `C:\Program Files\Tesseract-OCR`.
+| OpenCV 4       | Только для функций компьютерного зрения. Подбирается через `pkg-config opencv4`.
+|===
+
+Проверить установленный инструментарий:
+
+[source,powershell]
+----
+make check-deps
+----
+
+Если Tesseract или OpenCV не установлены — это не помешает работать с эмуляцией ввода и
+захватом экрана; библиотека просто соберётся без соответствующих функций.
+
+=== Шаг 1. Сборка за одну команду
+
+В корне репозитория:
+
+[source,powershell]
+----
+make all
+----
+
+В результате будут собраны:
+
+* `lib/libautomator.a` — статическая библиотека;
+* `lib/libautomator.dll` — динамическая библиотека (нужна для Python и Qt);
+* `console/automator_console.exe` — консольное приложение.
+
+=== Шаг 2. Проверка консольного приложения
+
+[source,powershell]
+----
+.\console\automator_console.exe -layout
+----
+
+Ожидаемый вывод — определённая раскладка клавиатуры активного окна
+(`ENG (English)` или `RUS (Russian)`).
+
+=== Шаг 3. Первый Python-сценарий
+
+Создайте файл `hello.py` рядом с `libautomator.dll` (или используйте `scripts/`
+из проекта):
+
+[source,python]
+----
+# hello.py
+from wrapper_automator import automator
+
+automator.info("Старт через 3 секунды — переключитесь в Блокнот")
+automator.sleep(3)
+
+automator.keystroke("Hello from Automator!")
+automator.sleep(1)
+
+automator.click(500, 300)         # Левый клик по координатам
+automator.move(700, 400)          # Перемещение мыши
+automator.rectangle(400, 200, 150, 100)   # Нарисовать прямоугольник
+----
+
+Запуск:
+
+[source,powershell]
+----
+# Добавьте MinGW в PATH (нужно для зависимостей DLL)
+$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+
+# Положите wrapper_automator.py и libautomator.dll рядом с hello.py
+copy scripts\wrapper_automator.py .
+copy lib\libautomator.dll .
+
+python hello.py
+----
+
+После запуска у вас будет 3 секунды, чтобы переключиться в окно Блокнота — туда будет
+напечатан текст и выполнены жесты мышью.
+
+=== Шаг 4. (Опционально) Графический редактор сценариев
+
+Если установлен Qt 5/6 + `qmake`:
+
+[source,powershell]
+----
+make qt
+.\gui-qt\automator_qt.exe
+----
+
+В редакторе:
+
+. Откройте меню *Settings* и укажите пути к Python, MinGW и `automator.dll`
+  (кнопка *Search* выполнит автопоиск).
+. Введите код сценария или выберите шаблон из выпадающего списка.
+. Нажмите *Start* — сценарий выполнится в отдельном процессе, вывод появится в
+  нижней панели.
+
+=== Шаг 5. Распознавание текста системного трея
+
+Для функций OCR нужен установленный Tesseract:
+
+[source,powershell]
+----
+.\console\automator_console.exe
+----
+
+Приложение найдёт область трея, выделит в ней текстовые регионы (через OpenCV) и
+распознает текст в каждом тремя стратегиями (`eng`, `rus`, `eng+rus`).
+
+=== Шпаргалка по Python API
+
+[source,python]
+----
+from wrapper_automator import automator
+
+# --- Клавиатура ---
+automator.keystroke("text")              # Ввести строку
+
+# --- Мышь ---
+automator.click(x, y)                    # Левый клик
+automator.click(x, y, button='right')    # Правый клик
+automator.click(x, y, button='middle')   # Средний клик
+automator.move(x, y)                     # Перемещение
+automator.drag(x1, y1, x2, y2)           # Перетаскивание
+automator.rectangle(x, y, w, h)          # Нарисовать прямоугольник
+
+# --- Экран ---
+automator.capture_screen(x, y, w, h, "out.bmp")
+
+# --- Управление ---
+automator.sleep(seconds)
+automator.msleep(ms)
+automator.info("сообщение")
+automator.warning("сообщение")
+automator.error("сообщение")
+----
+
+Готовые примеры лежат в `scripts/`:
+
+* `simple_demo.py` — демонстрация всех базовых жестов;
+* `qt_example_script.py` — шаблон для запуска через GUI;
+* `test_automator.py` — модульные тесты обёртки.

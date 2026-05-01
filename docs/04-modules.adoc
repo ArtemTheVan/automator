@@ -1,0 +1,348 @@
+== Описание программных модулей
+
+=== Модуль `lib/keyboard` — эмуляция клавиатуры
+
+[cols="1,3"]
+|===
+| Файлы           | `lib/keyboard.h`, `lib/keyboard.c`
+| Зависимости     | `windows.h`, функция WinAPI `SendInput`
+| Экспорт         | `KEYBOARD_API` (`__declspec(dllexport)` при сборке DLL)
+|===
+
+Модуль преобразует строку символов в последовательность событий `INPUT` структуры
+WinAPI и отправляет её через `SendInput`. Заглавные буквы и часть знаков пунктуации
+(например, `!`, `@`) набираются с автоматическим зажатием клавиши Shift. Между событиями
+выдерживается пауза в 10 мс.
+
+Ограничения текущей реализации:
+
+* поддерживается ASCII-подмножество (`A`–`Z`, `a`–`z`, `0`–`9`, пробел, `!`, `@`); прочие
+  специальные символы пропускаются;
+* кириллица из C-уровня не вводится напрямую — для UTF-8 используйте Python-обёртку,
+  которая кодирует строку и передаёт её, либо расширьте таблицу VK-кодов.
+
+API:
+
+[source,c]
+----
+KEYBOARD_API void simulate_keystroke(const char *text);
+----
+
+=== Модуль `lib/mouse` — эмуляция мыши
+
+[cols="1,3"]
+|===
+| Файлы       | `lib/mouse.h`, `lib/mouse.c`
+| Зависимости | `windows.h`, `SendInput`, `GetSystemMetrics`
+|===
+
+Модуль работает с последовательностями `MouseAction`. Координаты `(x, y)` со значением
+`-1` означают «не двигать мышь». Для перемещения координаты пересчитываются в абсолютные
+значения 0–65535, как требует `MOUSEEVENTF_ABSOLUTE`.
+
+[source,c]
+----
+typedef struct {
+    int   x;
+    int   y;
+    DWORD dwFlags;   // комбинация MOUSEEVENTF_*
+} MouseAction;
+
+MOUSE_API void simulate_mouse_sequence(const MouseAction *actions, int count);
+MOUSE_API void simulate_mouse_click_at(int x, int y);
+----
+
+Между действиями вставляется задержка 50 мс. На уровне Python-обёртки на этом API строятся
+методы `click`, `move`, `drag`, `rectangle`.
+
+=== Модуль `lib/screen` — захват экрана
+
+[cols="1,3"]
+|===
+| Файлы       | `lib/screen.h`, `lib/screen.c`
+| Зависимости | GDI: `BitBlt`, `GetDIBits`, `CreateCompatibleBitmap`
+|===
+
+Создаёт совместимый битмап через `CreateCompatibleBitmap` + `BitBlt`, преобразует его в
+24-битный DIB и сохраняет в BMP-файл с правильно заполненными `BITMAPFILEHEADER` и
+`BITMAPINFOHEADER`. Дополнительно предоставляет утилиты для определения размеров экрана
+и фиксированной/автоматической области системного трея.
+
+[source,c]
+----
+typedef struct { int x, y, width, height; } ScreenRegion;
+
+SCREEN_API int          capture_screen_region(int x, int y, int w, int h, const char *file);
+SCREEN_API HBITMAP      capture_to_bitmap(int x, int y, int w, int h);
+SCREEN_API int          save_bitmap_to_file(HBITMAP bmp, const char *file);
+SCREEN_API int          get_screen_width(void);
+SCREEN_API int          get_screen_height(void);
+SCREEN_API ScreenRegion get_system_tray_region(void);
+SCREEN_API ScreenRegion get_system_tray_region_auto(void);
+----
+
+`get_system_tray_region_auto()` опционально использует `detect_system_tray_region()`
+из OpenCV-модуля, если он скомпилирован с флагом `USE_OPENCV`.
+
+=== Модуль `lib/window` — поиск окон
+
+[cols="1,3"]
+|===
+| Файлы       | `lib/window.h`, `lib/window.c`
+| Зависимости | `EnumWindows`, `GetWindowText`, `GetClassName`
+|===
+
+Предоставляет утилиты обхода видимых окон верхнего уровня и поиска окон по эвристикам
+(виртуальная машина, системный трей).
+
+[source,c]
+----
+typedef struct {
+    HWND  handle;
+    char  title[256];
+    char  class_name[256];
+    RECT  rect;
+    int   pid;
+    BOOL  is_visible;
+} WindowInfo;
+
+typedef struct { WindowInfo *windows; int count, capacity; } WindowList;
+
+WINDOW_API HWND        find_virtual_machine_window(void);
+WINDOW_API char       *get_window_text_ex(HWND hwnd, char *buffer, int buffer_size);
+WINDOW_API WindowList *find_all_visible_windows(void);
+WINDOW_API void        free_window_list(WindowList *list);
+WINDOW_API HWND        find_system_tray_window(void);
+----
+
+=== Модуль `lib/opencv_wrapper` — компьютерное зрение
+
+[cols="1,3"]
+|===
+| Файлы       | `lib/opencv.h`, `lib/opencv_wrapper.cpp`
+| Зависимости | OpenCV 4 (`opencv_core`, `imgproc`, `highgui`, `imgcodecs`)
+| Сборка      | Опционально, через `pkg-config opencv4`. При отсутствии — `-DNO_OPENCV`.
+|===
+
+Функции:
+
+* `detect_system_tray_region_opencv()` — детекция области трея по морфологическим
+  признакам (преобладание тёмных горизонтальных полос внизу экрана).
+* `find_text_regions_in_tray()` — поиск текстовых регионов через бинаризацию и
+  морфологические замыкания. Объединяет близкие регионы (см. структуру `Config`
+  в `opencv_wrapper.cpp`).
+* `find_keyboard_layout_in_region()` — поиск маленького индикатора раскладки.
+
+[source,c]
+----
+typedef struct {
+    int   x, y, width, height;
+    float confidence;
+} DetectedRegion;
+
+OPENCV_API int             opencv_init(void);
+OPENCV_API void            opencv_cleanup(void);
+OPENCV_API DetectedRegion  detect_system_tray_region_opencv(void);
+OPENCV_API DetectedRegion *find_text_regions_in_tray(ScreenRegion region, int *region_count);
+OPENCV_API DetectedRegion  find_keyboard_layout_in_region(ScreenRegion region);
+----
+
+=== Модуль `lib/ocr` — распознавание текста
+
+[cols="1,3"]
+|===
+| Файлы       | `lib/ocr.h`, `lib/ocr.c`
+| Зависимости | Tesseract OCR (CLI), tessdata
+|===
+
+Модуль вызывает CLI Tesseract через `system()`, читает результирующий `.txt`,
+преобразует его из UTF-8 в CP1251, очищает от управляющих символов и считает
+эвристическую уверенность по доле «осмысленных» символов.
+
+[source,c]
+----
+typedef struct {
+    char  *text;
+    float  confidence;
+    int    text_length;
+    int    error_code;     // OCR_SUCCESS, OCR_ERROR_*
+} OCRResult;
+
+OCR_API int        ocr_init(const char *tessdata_path);
+OCR_API void       ocr_cleanup(void);
+OCR_API OCRResult  ocr_from_file(const char *image, const char *lang,
+                                 unsigned int psm, unsigned int dpi);
+OCR_API void       ocr_result_free(OCRResult *result);
+----
+
+Коды ошибок:
+
+[source,c]
+----
+#define OCR_SUCCESS                  0
+#define OCR_ERROR_INIT_FAILED       -1
+#define OCR_ERROR_NO_TEXT           -2
+#define OCR_ERROR_LOW_CONFIDENCE    -3
+#define OCR_ERROR_CAPTURE_FAILED    -4
+#define OCR_ERROR_FILE_NOT_FOUND    -5
+#define OCR_ERROR_INVALID_PARAMS    -6
+#define OCR_ERROR_TESSERACT_NOT_FOUND -7
+#define OCR_ERROR_IMAGE_EMPTY       -8
+----
+
+=== Модуль `console/main.c` — консольное приложение
+
+CLI-приложение `automator_console.exe` объединяет три режима работы:
+
+* без аргументов — полный конвейер «трей → OpenCV → OCR → вывод текста»;
+* `-layout` (`-l`) — определение раскладки клавиатуры активного окна
+  (`GetForegroundWindow → GetWindowThreadProcessId → GetKeyboardLayout`);
+* `-test` — отладочный режим: только детекция текстовых регионов OpenCV с
+  сохранением каждого региона в BMP.
+
+Для каждого найденного текстового региона приложение выполняет три попытки OCR
+(`eng`, `rus`, `eng+rus`) и выбирает результат с максимальной скорректированной
+уверенностью (бонус +0.2 за наличие пунктуации).
+
+=== Модуль `gui-qt` — Qt-редактор сценариев
+
+Qt-приложение состоит из двух классов:
+
+* `AutomatorWidget` — главное окно: вкладки, редактор `QTextEdit`, нумерация строк
+  `QPlainTextEdit`, вывод `QTextBrowser`, меню (файл/правка/запуск/настройки/последние
+  файлы), кнопки записи/загрузки/сохранения/запуска/остановки, выбор шрифта, шаблоны.
+* `SettingsDialog` — диалог настройки путей к Python, MinGW, OpenCV, `automator.dll`,
+  каталогу скриптов; функция автопоиска зависимостей.
+
+[plantuml, gui-classes, svg]
+----
+@startuml
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+
+class QWidget
+class QDialog
+
+class AutomatorWidget {
+  - m_tabWidget : QTabWidget*
+  - m_editor : QTextEdit*
+  - m_lineNumbers : QPlainTextEdit*
+  - m_outputBrowser : QTextBrowser*
+  - m_recordButton : QPushButton*
+  - m_loadButton : QPushButton*
+  - m_saveButton : QPushButton*
+  - m_startButton : QPushButton*
+  - m_stopButton : QPushButton*
+  - m_scriptProcess : QProcess*
+  - m_settings : QSettings*
+  - m_currentFile : QString
+  - m_pythonPath : QString
+  - m_automatorLibPath : QString
+  - m_isRecording : bool
+  + openSettings()
+  + runScript()
+  + stopScript()
+  + newScript()
+  + loadScript()
+  + saveScript()
+  + insertTemplate()
+  + toggleRecording(bool)
+  - setupUI()
+  - setupMenu()
+  - setupEditor()
+  - copyWrapperToTempDir()
+  - copyDllToTempDir()
+  - copyMingwDependenciesToTempDir()
+  - createTempPythonFile(QString)
+}
+
+class SettingsDialog {
+  - m_settings : QSettings*
+  - m_mingwEdit : QLineEdit*
+  - m_opencvEdit : QLineEdit*
+  - m_pythonEdit : QLineEdit*
+  - m_automatorLibEdit : QLineEdit*
+  - m_scriptsEdit : QLineEdit*
+  + mingwPath() : QString
+  + opencvPath() : QString
+  + pythonPath() : QString
+  + automatorLibPath() : QString
+  + scriptsPath() : QString
+  - browseMingw()
+  - browseOpencv()
+  - browsePython()
+  - validatePaths()
+  - saveSettings()
+  - searchDependencies()
+  - findMingwInSystem() : QString
+  - findPythonInSystem() : QString
+}
+
+QWidget <|-- AutomatorWidget
+QDialog <|-- SettingsDialog
+AutomatorWidget --> SettingsDialog : открывает
+AutomatorWidget --> "1" QProcess : владеет
+@enduml
+----
+
+При запуске сценария `AutomatorWidget` копирует во временный каталог
+`wrapper_automator.py`, `automator.dll` и зависимости MinGW, формирует переменную
+`PATH` и запускает Python-скрипт через `QProcess`.
+
+=== Модуль `scripts/wrapper_automator.py` — Python-обёртка
+
+Класс `Automator` реализует паттерн «синглтон». В `_load_library()` библиотека
+ищется по списку кандидатов (явный путь, `%TEMP%`, текущий каталог), при необходимости
+добавляется через `os.add_dll_directory()`.
+
+В `_setup_functions()` через `ctypes` назначаются `argtypes`/`restype` для
+экспортируемых функций C.
+
+[plantuml, python-class, svg]
+----
+@startuml
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+
+class MouseAction <<Structure>> {
+  + x : c_int
+  + y : c_int
+  + dwFlags : c_ulong
+}
+
+class Automator <<singleton>> {
+  - _instance : Automator
+  - _initialized : bool
+  - lib : ctypes.CDLL
+  - _dll_path : str
+  + __new__(cls, dll_path)
+  + __init__(dll_path)
+  - _load_library()
+  - _setup_functions()
+  + keystroke(text)
+  + mouse_sequence(actions)
+  + click_at(x, y)
+  + click(x, y, button)
+  + move(x, y, absolute)
+  + drag(sx, sy, ex, ey, button)
+  + rectangle(x, y, w, h)
+  + capture_screen(x, y, w, h, filename)
+  + sleep(seconds)
+  + msleep(ms)
+  + info(msg)
+  + warning(msg)
+  + error(msg)
+}
+
+Automator ..> MouseAction : использует
+Automator ..> "ctypes.CDLL" : загружает\nlibautomator.dll
+@enduml
+----
+
+Высокоуровневые методы строят последовательности `MouseAction` для базовых
+жестов:
+
+* `click(x, y, button)` — пара `LEFTDOWN`/`LEFTUP` (или `RIGHT*`, `MIDDLE*`);
+* `drag(sx, sy, ex, ey)` — `LEFTDOWN` → перемещение → `LEFTUP`;
+* `rectangle(x, y, w, h)` — пять точек по периметру;
+* `move(x, y, absolute)` — `MOUSEEVENTF_MOVE [| MOUSEEVENTF_ABSOLUTE]`.
