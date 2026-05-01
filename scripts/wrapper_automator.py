@@ -1,14 +1,26 @@
 """
 wrapper_automator.py - Обертка для библиотеки automator.dll
 Предоставляет удобный интерфейс для работы с функциями автоматизации.
+
+Поиск libautomator.dll выполняется в следующем порядке:
+    1. Явный путь, переданный в Automator(dll_path=...)
+    2. Переменная окружения AUTOMATOR_DLL_PATH
+    3. Каталог рядом с этим скриптом (../lib/libautomator.dll)
+    4. Каталог рядом с этим скриптом (./libautomator.dll)
+    5. Текущая рабочая директория
+    6. Системный поиск DLL (PATH)
+
+Каталог %TEMP% намеренно НЕ просматривается — это предотвращает DLL hijacking.
 """
 
 import ctypes
-from ctypes import c_int, c_char_p, c_void_p, Structure, POINTER, byref
+import logging
 import os
 import sys
 import time
-import traceback
+from ctypes import POINTER, Structure, c_char_p, c_int
+
+log = logging.getLogger("automator")
 
 # =========== Константы ===========
 
@@ -41,20 +53,51 @@ VK_DOWN = 0x28
 VK_LEFT = 0x25
 VK_RIGHT = 0x27
 
+_BUTTON_FLAGS = {
+    "left":   (MOUSEEVENTF_LEFTDOWN,   MOUSEEVENTF_LEFTUP),
+    "right":  (MOUSEEVENTF_RIGHTDOWN,  MOUSEEVENTF_RIGHTUP),
+    "middle": (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+}
+
 # =========== Структуры ===========
 
 
 class MouseAction(Structure):
-    """
-    Структура для описания одного действия мыши.
-    Аналогична структуре в C-библиотеке automator.
-    """
-
+    """Структура одного действия мыши, аналог MouseAction из C-библиотеки."""
     _fields_ = [
-        ("x", c_int),  # Координата X
-        ("y", c_int),  # Координата Y
-        ("dwFlags", ctypes.c_ulong),  # Флаги действия (DWORD)
+        ("x", c_int),
+        ("y", c_int),
+        ("dwFlags", ctypes.c_ulong),
     ]
+
+
+# =========== Поиск библиотеки ===========
+
+
+def _candidate_dll_paths(explicit_path):
+    """
+    Возвращает список кандидатных путей к libautomator.dll в порядке приоритета.
+
+    %TEMP% намеренно исключён — это предотвращает DLL hijacking.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = []
+
+    if explicit_path:
+        candidates.append(explicit_path)
+
+    env_path = os.environ.get("AUTOMATOR_DLL_PATH")
+    if env_path:
+        candidates.append(env_path)
+
+    candidates.extend([
+        os.path.join(here, "..", "lib", "libautomator.dll"),
+        os.path.join(here, "libautomator.dll"),
+        os.path.join(os.getcwd(), "libautomator.dll"),
+        "libautomator.dll",  # системный поиск через PATH
+    ])
+
+    return [os.path.normpath(p) for p in candidates]
 
 
 # =========== Основной класс обертки ===========
@@ -63,28 +106,25 @@ class MouseAction(Structure):
 class Automator:
     """
     Основной класс для работы с библиотекой automator.dll.
-    Создает глобальный экземпляр для использования во всех скриптах.
+    Реализует паттерн «синглтон» — один экземпляр на процесс.
     """
 
-    # Глобальный экземпляр (синглтон)
     _instance = None
     _initialized = False
 
     def __new__(cls, dll_path=None):
-        """Паттерн синглтон - возвращает один экземпляр на все приложение."""
         if cls._instance is None:
             cls._instance = super(Automator, cls).__new__(cls)
         return cls._instance
 
     def __init__(self, dll_path=None):
         """
-        Инициализация обертки. Загружает библиотеку automator.dll.
+        Инициализация обёртки. Загружает libautomator.dll.
 
         Args:
-            dll_path (str, optional): Путь к библиотеке. Если None,
-                                     пытается найти в стандартных местах.
+            dll_path: Явный путь к DLL. Если None — поиск по умолчанию
+                      (см. модульный docstring).
         """
-        # Инициализируем только один раз
         if self._initialized:
             return
 
@@ -94,91 +134,66 @@ class Automator:
         self._setup_functions()
 
         self._initialized = True
-
-        print(f"[Automator] Инициализация прошла успешно")
+        log.info("Automator initialized (DLL: %s)", self._loaded_path)
 
     def _load_library(self):
-        """Загружает библиотеку"""
-        # Выводим информацию о среде\n";
-        print("=== Запуск Python скрипта ===")
-        print(f"Используется Python: {sys.executable}")
-        print(f"Текущая директория: {os.getcwd()}")
-        # Проверяем PATH
-        paths = os.environ.get("PATH", "").split(";")
-        print("Первый путь в PATH:", paths[0] if paths else "пусто")
-        # Временная директория (где должна быть скопирована DLL)
-        temp_dir = os.environ.get("TEMP", "") or os.environ.get("TMP", "")
-        temp_dll = os.path.join(temp_dir, "libautomator.dll")
+        """Загружает libautomator.dll по списку кандидатных путей."""
+        last_error = None
 
-        # Проверяем путь из переменной окружения
-        # env_dll = os.environ.get("AUTOMATOR_DLL_PATH")
-        env_dll = os.environ.get("PATH")
+        for path in _candidate_dll_paths(self._dll_path):
+            # Для системного поиска (одного только имени файла) os.path.exists()
+            # вернёт False, но ctypes.CDLL всё равно сможет найти DLL через PATH.
+            is_bare_name = os.path.dirname(path) == ""
 
-        # Список возможных путей
-        possible_paths = [
-            self._dll_path,
-            env_dll,
-            temp_dll,
-            "libautomator.dll",
-            "./libautomator.dll",
-        ]
+            if not is_bare_name and not os.path.exists(path):
+                log.debug("DLL not found at: %s", path)
+                continue
 
-        # print(f"dll_path: {dll_path}")
-        print(f"self._dll_path: {self._dll_path}")
-        print(f"temp_dir: {temp_dir}")
-        print(f"temp_dll: {temp_dll}")
-        print(f"env_dll: {env_dll}")
+            log.debug("Trying to load DLL: %s", path)
 
-        if os.path.exists(temp_dll):
-            print(f"Файл не существует: {temp_dll}")
+            # Python 3.8+: добавляем КАТАЛОГ DLL (а не сам файл) в пути поиска,
+            # чтобы зависимые DLL загрузились корректно.
+            if not is_bare_name and hasattr(os, "add_dll_directory"):
+                dll_dir = os.path.dirname(os.path.abspath(path))
+                if os.path.isdir(dll_dir):
+                    try:
+                        os.add_dll_directory(dll_dir)
+                    except (OSError, FileNotFoundError) as e:
+                        log.debug("add_dll_directory(%s) failed: %s", dll_dir, e)
 
-        for path in possible_paths:
-            if path and os.path.exists(path):
-                # КРИТИЧЕСКИ ВАЖНО: Для Python 3.8+ добавляем пути поиска DLL\n";
-                if hasattr(os, "add_dll_directory"):
-                    os.add_dll_directory(path)
-                    print(f"Добавлен путь поиска DLL: {path}")
-                else:
-                    print("Внимание: Python < 3.8, os.add_dll_directory недоступен")
-                print(f"Пробую загрузить: {path}")
-                try:
-                    self.lib = ctypes.CDLL(path)  # CDLL для MinGW
-                    print(f"Библиотека загружена: {path}")
-                    return
-                except Exception as e:
-                    print(f"Ошибка загрузки {path}: {e}")
-            else:
-                print(f"Файл библиотеки не существует: {path}")
+            try:
+                self.lib = ctypes.CDLL(path)  # CDLL — для MinGW-сборки
+                self._loaded_path = path
+                return
+            except OSError as e:
+                last_error = e
+                log.debug("CDLL load failed for %s: %s", path, e)
 
-        raise FileNotFoundError("Не удалось загрузить библиотеку")
+        raise FileNotFoundError(
+            "Не удалось загрузить libautomator.dll. "
+            "Передайте путь явно через Automator(dll_path=...) или "
+            "укажите переменную окружения AUTOMATOR_DLL_PATH. "
+            f"Последняя ошибка: {last_error}"
+        )
 
     def _setup_functions(self):
-        """Настраивает функции"""
-        # simulate_keystroke(const char *text)
+        """Настраивает argtypes/restype для C-функций."""
         self.lib.simulate_keystroke.argtypes = [c_char_p]
         self.lib.simulate_keystroke.restype = None
 
-        # simulate_mouse_sequence(const MouseAction *actions, int count)
         self.lib.simulate_mouse_sequence.argtypes = [POINTER(MouseAction), c_int]
         self.lib.simulate_mouse_sequence.restype = None
 
-        # simulate_mouse_click_at(int x, int y)
         self.lib.simulate_mouse_click_at.argtypes = [c_int, c_int]
         self.lib.simulate_mouse_click_at.restype = None
 
-        # capture_screen_region(int x, int y, int w, int h, const char* filename)
         self.lib.capture_screen_region.argtypes = [c_int, c_int, c_int, c_int, c_char_p]
         self.lib.capture_screen_region.restype = c_int
 
-    # =========== Основные методы ===========
+    # =========== Базовые методы ===========
 
     def keystroke(self, text):
-        """
-        Симуляция нажатия клавиш для ввода текста.
-
-        Args:
-            text (str): Текст для ввода
-        """
+        """Симуляция нажатия клавиш для ввода текста (UTF-8)."""
         if isinstance(text, str):
             text = text.encode("utf-8")
         self.lib.simulate_keystroke(text)
@@ -188,7 +203,8 @@ class Automator:
         Эмуляция последовательности действий мыши.
 
         Args:
-            actions: Список кортежей (x, y, flags) или словарей
+            actions: список кортежей (x, y, flags) или словарей
+                     {"x": ..., "y": ..., "flags": ...}.
         """
         count = len(actions)
         actions_array = (MouseAction * count)()
@@ -199,188 +215,113 @@ class Automator:
                 actions_array[i].y = action["y"]
                 actions_array[i].dwFlags = action.get("flags", 0)
             else:
-                # Кортеж (x, y, flags)
                 actions_array[i].x = action[0]
                 actions_array[i].y = action[1]
                 actions_array[i].dwFlags = action[2] if len(action) > 2 else 0
 
         self.lib.simulate_mouse_sequence(actions_array, count)
 
-    def click_at(self, x, y):
-        """
-        Клик мыши в указанных координатах.
-
-        Args:
-            x (int): Координата X
-            y (int): Координата Y
-        """
-        self.lib.simulate_mouse_click_at(x, y)
-
     def capture_screen(self, x, y, width, height, filename):
-        """
-        Захват области экрана.
-
-        Args:
-            x (int): Координата X левого верхнего угла
-            y (int): Координата Y левого верхнего угла
-            width (int): Ширина области
-            height (int): Высота области
-            filename (str): Имя файла для сохранения
-
-        Returns:
-            int: Код результата (0 - успех)
-        """
+        """Захват области экрана. Возвращает 0 при успехе, !=0 при ошибке."""
         if isinstance(filename, str):
             filename = filename.encode("utf-8")
         return self.lib.capture_screen_region(x, y, width, height, filename)
 
-    # =========== Вспомогательные методы ===========
+    # =========== Высокоуровневые методы ===========
 
     def click(self, x, y, button="left"):
-        """
-        Клик указанной кнопкой мыши в координатах.
+        """Клик указанной кнопкой мыши в координатах."""
+        if button not in _BUTTON_FLAGS:
+            raise ValueError(f"Unknown button: {button!r}")
+        flags_down, flags_up = _BUTTON_FLAGS[button]
+        self.mouse_sequence([(x, y, flags_down), (x, y, flags_up)])
 
-        Args:
-            x (int): Координата X
-            y (int): Координата Y
-            button (str): Кнопка мыши ('left', 'right', 'middle')
-        """
-        flags_down = MOUSEEVENTF_LEFTDOWN
-        flags_up = MOUSEEVENTF_LEFTUP
-
-        if button == "right":
-            flags_down = MOUSEEVENTF_RIGHTDOWN
-            flags_up = MOUSEEVENTF_RIGHTUP
-        elif button == "middle":
-            flags_down = MOUSEEVENTF_MIDDLEDOWN
-            flags_up = MOUSEEVENTF_MIDDLEUP
-
-        actions = [(x, y, flags_down), (x, y, flags_up)]
-        self.mouse_sequence(actions)
+    # Алиас для обратной совместимости — используйте click().
+    click_at = click
 
     def drag(self, start_x, start_y, end_x, end_y, button="left"):
-        """
-        Перетаскивание мышью из одной точки в другую.
-
-        Args:
-            start_x (int): Начальная координата X
-            start_y (int): Начальная координата Y
-            end_x (int): Конечная координата X
-            end_y (int): Конечная координата Y
-            button (str): Кнопка мыши ('left', 'right', 'middle')
-        """
-        flags_down = MOUSEEVENTF_LEFTDOWN
-        flags_up = MOUSEEVENTF_LEFTUP
-
-        if button == "right":
-            flags_down = MOUSEEVENTF_RIGHTDOWN
-            flags_up = MOUSEEVENTF_RIGHTUP
-        elif button == "middle":
-            flags_down = MOUSEEVENTF_MIDDLEDOWN
-            flags_up = MOUSEEVENTF_MIDDLEUP
-
-        actions = [
-            (start_x, start_y, flags_down),  # Нажатие кнопки
-            (end_x, end_y, 0),  # Перемещение с зажатой кнопкой
-            (end_x, end_y, flags_up),  # Отпускание кнопки
-        ]
-        self.mouse_sequence(actions)
+        """Перетаскивание мышью из одной точки в другую."""
+        if button not in _BUTTON_FLAGS:
+            raise ValueError(f"Unknown button: {button!r}")
+        flags_down, flags_up = _BUTTON_FLAGS[button]
+        self.mouse_sequence([
+            (start_x, start_y, flags_down),
+            (end_x, end_y, 0),
+            (end_x, end_y, flags_up),
+        ])
 
     def move(self, x, y, absolute=True):
-        """
-        Перемещение мыши в указанные координаты.
-
-        Args:
-            x (int): Координата X
-            y (int): Координата Y
-            absolute (bool): Использовать абсолютные координаты
-        """
+        """Перемещение мыши в указанные координаты."""
         flags = MOUSEEVENTF_MOVE
         if absolute:
             flags |= MOUSEEVENTF_ABSOLUTE
         self.mouse_sequence([(x, y, flags)])
 
     def rectangle(self, x, y, width, height):
-        """
-        Рисование прямоугольника мышью.
+        """Рисование прямоугольника зажатой левой кнопкой."""
+        self.mouse_sequence([
+            (x, y, MOUSEEVENTF_LEFTDOWN),
+            (x + width, y, 0),
+            (x + width, y + height, 0),
+            (x, y + height, 0),
+            (x, y, 0),
+            (x, y, MOUSEEVENTF_LEFTUP),
+        ])
 
-        Args:
-            x (int): Координата X левого верхнего угла
-            y (int): Координата Y левого верхнего угла
-            width (int): Ширина прямоугольника
-            height (int): Высота прямоугольника
-        """
-        actions = [
-            (x, y, MOUSEEVENTF_LEFTDOWN),  # Нажатие в начальной точке
-            (x + width, y, 0),  # Перемещение вправо
-            (x + width, y + height, 0),  # Перемещение вниз
-            (x, y + height, 0),  # Перемещение влево
-            (x, y, 0),  # Возврат в начало
-            (x, y, MOUSEEVENTF_LEFTUP),  # Отпускание кнопки
-        ]
-        self.mouse_sequence(actions)
+    # =========== Утилиты ===========
 
     def sleep(self, seconds):
-        """
-        Пауза в выполнении скрипта.
-
-        Args:
-            seconds (float): Количество секунд для паузы
-        """
+        """Пауза в секундах."""
         time.sleep(seconds)
 
     def msleep(self, milliseconds):
-        """
-        Пауза в выполнении скрипта (миллисекунды).
-
-        Args:
-            milliseconds (int): Количество миллисекунд для паузы
-        """
+        """Пауза в миллисекундах."""
         time.sleep(milliseconds / 1000.0)
 
     def info(self, message):
-        """
-        Вывод информационного сообщения.
-
-        Args:
-            message (str): Сообщение для вывода
-        """
+        log.info(message)
         print(f"[INFO] {message}")
 
     def warning(self, message):
-        """
-        Вывод предупреждающего сообщения.
-
-        Args:
-            message (str): Сообщение для вывода
-        """
+        log.warning(message)
         print(f"[WARNING] {message}")
 
     def error(self, message):
-        """
-        Вывод сообщения об ошибке.
-
-        Args:
-            message (str): Сообщение для вывода
-        """
+        log.error(message)
         print(f"[ERROR] {message}")
 
 
-# =========== Глобальный экземпляр для удобства ===========
+# =========== Глобальный экземпляр ===========
 
-# Создаем глобальный экземпляр
-automator = Automator("D:/Projects/automator/lib/libautomator.dll")
+# Ленивая инициализация: глобальный объект создаётся при первом обращении,
+# а не при импорте, чтобы импорт модуля не падал, если DLL недоступна.
+
+class _LazyAutomator:
+    """Прокси, инициализирующий Automator при первом обращении к атрибуту."""
+
+    _real = None
+
+    def _get(self):
+        if self.__class__._real is None:
+            self.__class__._real = Automator()
+        return self.__class__._real
+
+    def __getattr__(self, name):
+        return getattr(self._get(), name)
+
+    def __setattr__(self, name, value):
+        setattr(self._get(), name, value)
+
+
+automator = _LazyAutomator()
+
 
 # =========== Экспорт ===========
 
 __all__ = [
-    # Основной класс
     "Automator",
-    # Глобальный экземпляр
     "automator",
-    # Структуры
     "MouseAction",
-    # Константы
     "MOUSEEVENTF_MOVE",
     "MOUSEEVENTF_LEFTDOWN",
     "MOUSEEVENTF_LEFTUP",
@@ -408,56 +349,19 @@ __all__ = [
     "VK_RIGHT",
 ]
 
+
 # =========== Тест при прямом запуске ===========
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
     print("Тестирование wrapper_automator.py")
     print("=" * 50)
 
     try:
-        print(f"Глобальный экземпляр automator создан: {automator}")
-        print(f"Библиотека загружена: {automator.lib is not None}")
-
-        # Простой тест констант
-        print("\nКонстанты загружены:")
-        print(f"  MOUSEEVENTF_LEFTDOWN = {MOUSEEVENTF_LEFTDOWN:#06x}")
-        print(f"  VK_ENTER = {VK_ENTER:#04x}")
-
-        print("\nДоступные методы automator:")
-        methods = [
-            m
-            for m in dir(automator)
-            if not m.startswith("_") and m not in ["lib", "dll_path"]
-        ]
-        for i, method in enumerate(methods):
-            print(f"  {method}", end=", " if (i + 1) % 5 != 0 else "\n")
-
-        print("\n\nПример использования в скрипте:")
-        print(
-            """
-from wrapper_automator import automator
-import time
-
-def main():
-    automator.info("Начинаю выполнение скрипта...")
-    time.sleep(2)
-    
-    # Ввод текста
-    automator.keystroke("Hello World!")
-    
-    # Клик мыши
-    automator.click(500, 300)
-    
-    automator.info("Скрипт выполнен!")
-
-if __name__ == "__main__":
-    main()
-        """
-        )
-
+        a = Automator()
+        print(f"Библиотека загружена из: {a._loaded_path}")
+        print(f"\nMOUSEEVENTF_LEFTDOWN = {MOUSEEVENTF_LEFTDOWN:#06x}")
+        print(f"VK_ENTER = {VK_ENTER:#04x}")
     except Exception as e:
-        print(f"✗ Ошибка: {e}")
-        print("\nУбедитесь, что:")
-        print("1. Библиотека libautomator.dll существует")
-        print("2. Установлен Python 3.x")
-        print("3. Библиотека находится в одном из стандартных путей")
+        print(f"Ошибка: {e}")
+        sys.exit(1)
