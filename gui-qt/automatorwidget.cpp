@@ -1,4 +1,5 @@
 #include "automatorwidget.h"
+#include "scriptbuilder.h"
 #include "settingsdialog.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -58,6 +59,7 @@ AutomatorWidget::AutomatorWidget(QWidget *parent)
       m_recentFilesMenu(nullptr),
       m_scriptProcess(nullptr),
       m_recordingTimer(nullptr),
+      m_builder(nullptr),
       m_settings(nullptr),
       m_currentFile(""),
       m_pythonPath("python"),
@@ -412,6 +414,16 @@ void AutomatorWidget::setupUI()
     m_outputBrowser->setFont(QFont("Consolas", 10));
     m_outputBrowser->setStyleSheet("QTextBrowser { background-color: black; color: white; }");
 
+    // Вкладка визуального конструктора шагов
+    m_builder = new ScriptBuilder();
+    connect(m_builder, &ScriptBuilder::applyToEditorRequested,
+            this, &AutomatorWidget::onBuilderApplyToEditor);
+    connect(m_builder, &ScriptBuilder::importFromEditorRequested,
+            this, &AutomatorWidget::onBuilderImportFromEditor);
+    connect(m_builder, &ScriptBuilder::runRequested,
+            this, &AutomatorWidget::runScript);
+
+    m_tabWidget->addTab(m_builder, "Конструктор");
     m_tabWidget->addTab(editorTab, "Редактор");
     m_tabWidget->addTab(m_outputBrowser, "Вывод");
 
@@ -491,6 +503,7 @@ void AutomatorWidget::setupUI()
             "automator.info('Скрипт выполнен успешно!')\n";
 
         m_editor->setPlainText(exampleScript);
+        if (m_builder) m_builder->loadFromPython(exampleScript);
     }
 
     updateLineNumbers();
@@ -940,6 +953,7 @@ void AutomatorWidget::newScript()
     m_editor->clear();
     m_currentFile = "";
     m_isModified = false;
+    if (m_builder) m_builder->clearSteps();
     updateTitle();
     updateLineNumbers();
 
@@ -1182,6 +1196,11 @@ void AutomatorWidget::loadScriptFile(const QString &fileName)
     updateTitle();
     updateLineNumbers();
 
+    // Авто-импорт в визуальный конструктор шагов
+    if (m_builder) {
+        m_builder->loadFromPython(m_editor->toPlainText());
+    }
+
     // Добавляем файл в список недавних
     addToRecentFiles(fileName);
 
@@ -1421,4 +1440,21 @@ void AutomatorWidget::updateLastDirectory(const QString &filePath)
         QFileInfo fileInfo(filePath);
         setLastDirectory(fileInfo.absolutePath());
     }
+}
+
+void AutomatorWidget::onBuilderApplyToEditor(const QString &code)
+{
+    m_editor->setPlainText(code);
+    m_isModified = true;
+    updateTitle();
+    updateLineNumbers();
+    m_tabWidget->setCurrentIndex(1); // переключаемся на "Редактор"
+    m_statusLabel->setText("Код сгенерирован из конструктора");
+}
+
+void AutomatorWidget::onBuilderImportFromEditor()
+{
+    if (!m_builder) return;
+    m_builder->loadFromPython(m_editor->toPlainText());
+    m_statusLabel->setText("Шаги импортированы из кода");
 }

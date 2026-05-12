@@ -16,6 +16,8 @@
 #include <QUuid>
 #include <QTextBrowser>
 
+class ScriptBuilder;
+
 class AutomatorWidget : public QWidget
 {
     Q_OBJECT
@@ -55,6 +57,8 @@ private:
 
     QProcess *m_scriptProcess;
     QTimer *m_recordingTimer;
+
+    ScriptBuilder *m_builder;
 
     QSettings *m_settings;
 
@@ -120,6 +124,9 @@ private slots:
     void changeFontSize(int index);
     void insertTemplate();
     void toggleRecording(bool checked);
+
+    void onBuilderApplyToEditor(const QString &code);
+    void onBuilderImportFromEditor();
 };
 
 #endif // AUTOMATORWIDGET_H

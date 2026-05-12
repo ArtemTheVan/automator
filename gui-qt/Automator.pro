@@ -25,10 +25,12 @@ win32 {
 SOURCES += \
     main.cpp \
     automatorwidget.cpp \
+    scriptbuilder.cpp \
     settingsdialog.cpp
 
 HEADERS += \
     automatorwidget.h \
+    scriptbuilder.h \
     settingsdialog.h
 
 # Настройки компилятора
